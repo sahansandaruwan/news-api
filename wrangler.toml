@@ -1,0 +1,13 @@
+name = "news-api"
+compatibility_date = "2025-07-19"
+main = "index.js"
+
+[vars]
+# No additional environment variables needed
+
+[[kv_namespaces]]
+binding = "KV"
+id = "064e6db92a46486fb41b2c42cf3d7dff" # Must be updated after creating KV namespace
+
+[triggers]
+crons = ["0 * * * *"] # Run cache cleanup hourly
