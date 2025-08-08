@@ -1,13 +1,9 @@
 import Parser from 'rss-parser';
 const parser = new Parser();
 
-// Slugify helper for cache keys
 const slugify = str => str.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
-
-// HTML stripping helper
 const stripHTML = html => html ? html.replace(/<[^>]+>/g, '').trim() : '';
 
-// Fetch with timeout helper
 async function fetchWithTimeout(url, ms = 8000) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), ms);
@@ -18,13 +14,11 @@ async function fetchWithTimeout(url, ms = 8000) {
   }
 }
 
-// RSS Feeds configuration
 const RSS_FEEDS = [
+  // Example subset, extend as needed
   { name: 'TechCrunch', url: 'https://techcrunch.com/feed/', category: 'Technology' },
   { name: 'Wired', url: 'https://www.wired.com/feed/rss', category: 'Technology' },
-  { name: 'The Verge', url: 'https://www.theverge.com/rss/index.xml', category: 'Technology' },
   { name: 'BBC World', url: 'http://feeds.bbci.co.uk/news/world/rss.xml', category: 'World News' },
-  { name: 'CNN Top Stories', url: 'http://rss.cnn.com/rss/edition.rss', category: 'World News' },
   { name: 'TMZ', url: 'https://www.tmz.com/rss.xml', category: 'Celebrity Gossip' },
   { name: 'WikiHow', url: 'https://www.wikihow.com/feed.rss', category: 'How-To & DIY' },
   { name: 'OpenAI Blog', url: 'https://openai.com/blog/rss.xml', category: 'AI & Machine Learning' },
@@ -32,7 +26,6 @@ const RSS_FEEDS = [
   { name: 'Yahoo! Sports', url: 'https://sports.yahoo.com/rss/', category: 'Sports' },
 ];
 
-// Parse RSS feed safely
 async function parseRSSFeed(url) {
   try {
     const response = await fetchWithTimeout(url, 8000);
@@ -52,12 +45,11 @@ async function parseRSSFeed(url) {
   }
 }
 
-// Per-endpoint rate limiting
 async function checkRateLimit(request, env) {
   const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
   const path = new URL(request.url).pathname;
   const key = `rate_limit_${ip}_${slugify(path)}`;
-  
+
   const now = Date.now();
   const windowMs = 15 * 60 * 1000; // 15 minutes
   const maxRequests = 100;
@@ -77,14 +69,56 @@ async function checkRateLimit(request, env) {
   return null;
 }
 
+// Deduplicate articles by unique key
+function deduplicateArticles(articles) {
+  const seen = new Set();
+  return articles.filter(article => {
+    const key = `${article.title.toLowerCase()}|${article.source.toLowerCase()}|${article.pubDate || ''}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+// Apply search filter on articles by keyword
+function applySearchFilter(articles, search) {
+  if (!search) return articles;
+  const lowerSearch = search.toLowerCase();
+  return articles.filter(a =>
+    a.title.toLowerCase().includes(lowerSearch) ||
+    a.description.toLowerCase().includes(lowerSearch)
+  );
+}
+
+// Apply sorting on articles
+function applySorting(articles, sort, order) {
+  const asc = order === 'asc';
+  return articles.sort((a, b) => {
+    if (sort === 'title') {
+      return asc
+        ? a.title.localeCompare(b.title)
+        : b.title.localeCompare(a.title);
+    }
+    // Default sort by pubDate descending
+    const dateA = new Date(a.pubDate).getTime() || 0;
+    const dateB = new Date(b.pubDate).getTime() || 0;
+    return asc ? dateA - dateB : dateB - dateA;
+  });
+}
+
+// Paginate articles
+function paginate(articles, limit = 20, page = 1) {
+  const start = (page - 1) * limit;
+  return articles.slice(start, start + limit);
+}
+
 export default {
   async fetch(request, env) {
-    // CORS setup
     const corsHeaders = {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type',
-      'Access-Control-Max-Age': '86400'
+      'Access-Control-Max-Age': '86400',
     };
 
     if (request.method === 'OPTIONS') {
@@ -98,84 +132,126 @@ export default {
     const url = new URL(request.url);
     const path = url.pathname;
 
-    // Get all news or by category
+    // Parse query params for pagination, search, sort
+    const params = url.searchParams;
+    const limit = Math.min(parseInt(params.get('limit')) || 20, 100);
+    const page = Math.max(parseInt(params.get('page')) || 1, 1);
+    const search = params.get('search') || '';
+    const sort = params.get('sort') || 'pubDate'; // pubDate or title
+    const order = (params.get('order') || 'desc').toLowerCase(); // asc or desc
+
     if (path.startsWith('/api/news')) {
       const category = path.split('/')[3] ? decodeURIComponent(path.split('/')[3]) : null;
       const cacheKey = category ? `news_${slugify(category)}` : 'news_all';
 
       let articles = await env.KV.get(cacheKey, { type: 'json' });
-      if (articles) {
-        return new Response(JSON.stringify(articles), { headers: { 'Content-Type': 'application/json', ...corsHeaders } });
+      if (!articles) {
+        const feedsToFetch = category
+          ? RSS_FEEDS.filter(feed => feed.category.toLowerCase() === category.toLowerCase())
+          : RSS_FEEDS;
+
+        if (!feedsToFetch.length) {
+          return new Response(JSON.stringify({ error: 'Category not found' }), { status: 404, headers: { 'Content-Type': 'application/json', ...corsHeaders } });
+        }
+
+        const feedPromises = feedsToFetch.map(async feed => {
+          const parsedArticles = await parseRSSFeed(feed.url);
+          return parsedArticles.map(article => ({
+            ...article,
+            category: feed.category,
+            source: feed.name,
+          }));
+        });
+
+        articles = (await Promise.all(feedPromises)).flat();
+
+        articles = deduplicateArticles(articles);
+
+        // Sort by pubDate desc for caching
+        articles.sort((a, b) => {
+          const dateA = new Date(a.pubDate).getTime() || 0;
+          const dateB = new Date(b.pubDate).getTime() || 0;
+          return dateB - dateA;
+        });
+
+        await env.KV.put(cacheKey, JSON.stringify(articles), { expirationTtl: 600 });
       }
 
-      const feedsToFetch = category
-        ? RSS_FEEDS.filter(feed => feed.category.toLowerCase() === category.toLowerCase())
-        : RSS_FEEDS;
+      // Apply search filter
+      articles = applySearchFilter(articles, search);
 
-      if (!feedsToFetch.length) {
-        return new Response(JSON.stringify({ error: 'Category not found' }), { status: 404, headers: { 'Content-Type': 'application/json', ...corsHeaders } });
-      }
+      // Apply sorting
+      articles = applySorting(articles, sort, order);
 
-      const feedPromises = feedsToFetch.map(async feed => {
-        const parsedArticles = await parseRSSFeed(feed.url);
-        return parsedArticles.map(article => ({
-          ...article,
-          category: feed.category,
-          source: feed.name
-        }));
+      // Paginate results
+      const paginated = paginate(articles, limit, page);
+
+      return new Response(JSON.stringify({
+        page,
+        limit,
+        totalResults: articles.length,
+        totalPages: Math.ceil(articles.length / limit),
+        articles: paginated,
+      }), {
+        headers: { 'Content-Type': 'application/json', ...corsHeaders }
       });
-
-      articles = (await Promise.all(feedPromises)).flat();
-
-      // Sort by date with fallback
-      articles.sort((a, b) => {
-        const dateA = new Date(a.pubDate).getTime() || 0;
-        const dateB = new Date(b.pubDate).getTime() || 0;
-        return dateB - dateA;
-      });
-
-      await env.KV.put(cacheKey, JSON.stringify(articles), { expirationTtl: 600 });
-      return new Response(JSON.stringify(articles), { headers: { 'Content-Type': 'application/json', ...corsHeaders } });
     }
 
-    // Get news by source
     if (path.startsWith('/api/source')) {
       const source = decodeURIComponent(path.split('/')[3]);
       const cacheKey = `source_${slugify(source)}`;
 
       let articles = await env.KV.get(cacheKey, { type: 'json' });
-      if (articles) {
-        return new Response(JSON.stringify(articles), { headers: { 'Content-Type': 'application/json', ...corsHeaders } });
+      if (!articles) {
+        const feed = RSS_FEEDS.find(f => f.name.toLowerCase() === source.toLowerCase());
+        if (!feed) {
+          return new Response(JSON.stringify({ error: 'Source not found' }), { status: 404, headers: { 'Content-Type': 'application/json', ...corsHeaders } });
+        }
+
+        articles = await parseRSSFeed(feed.url);
+        articles = articles.map(article => ({
+          ...article,
+          category: feed.category,
+          source: feed.name,
+        }));
+
+        articles = deduplicateArticles(articles);
+
+        articles.sort((a, b) => {
+          const dateA = new Date(a.pubDate).getTime() || 0;
+          const dateB = new Date(b.pubDate).getTime() || 0;
+          return dateB - dateA;
+        });
+
+        await env.KV.put(cacheKey, JSON.stringify(articles), { expirationTtl: 600 });
       }
 
-      const feed = RSS_FEEDS.find(f => f.name.toLowerCase() === source.toLowerCase());
-      if (!feed) {
-        return new Response(JSON.stringify({ error: 'Source not found' }), { status: 404, headers: { 'Content-Type': 'application/json', ...corsHeaders } });
-      }
+      // Apply search, sort, paginate
+      articles = applySearchFilter(articles, search);
+      articles = applySorting(articles, sort, order);
+      const paginated = paginate(articles, limit, page);
 
-      articles = await parseRSSFeed(feed.url);
-      articles = articles.map(article => ({
-        ...article,
-        category: feed.category,
-        source: feed.name
-      }));
-
-      await env.KV.put(cacheKey, JSON.stringify(articles), { expirationTtl: 600 });
-      return new Response(JSON.stringify(articles), { headers: { 'Content-Type': 'application/json', ...corsHeaders } });
+      return new Response(JSON.stringify({
+        page,
+        limit,
+        totalResults: articles.length,
+        totalPages: Math.ceil(articles.length / limit),
+        articles: paginated,
+      }), {
+        headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      });
     }
 
-    // List categories
     if (path === '/api/categories') {
       const categories = [...new Set(RSS_FEEDS.map(feed => feed.category))];
       return new Response(JSON.stringify(categories), { headers: { 'Content-Type': 'application/json', ...corsHeaders } });
     }
 
-    // List sources
     if (path === '/api/sources') {
       const sources = RSS_FEEDS.map(feed => ({ name: feed.name, category: feed.category }));
       return new Response(JSON.stringify(sources), { headers: { 'Content-Type': 'application/json', ...corsHeaders } });
     }
 
     return new Response(JSON.stringify({ error: 'Not found' }), { status: 404, headers: { 'Content-Type': 'application/json', ...corsHeaders } });
-  }
+  },
 };
