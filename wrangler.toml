@@ -1,5 +1,7 @@
 name = "news-api"
 compatibility_date = "2025-08-08"
+compatibility_flags = ["nodejs_compat"]   # << Add this line!
+
 main = "index.js"
 
 [vars]
