@@ -1,8 +1,9 @@
 import Parser from 'rss-parser';
 const parser = new Parser();
 
-const slugify = str => str.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
-const stripHTML = html => html ? html.replace(/<[^>]+>/g, '').trim() : '';
+const slugify = str =>
+  str.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
+const stripHTML = html => (html ? html.replace(/<[^>]+>/g, '').trim() : '');
 
 async function fetchWithTimeout(url, ms = 8000) {
   const controller = new AbortController();
@@ -20,7 +21,6 @@ const RSS_FEEDS = [
   { name: 'BBC World', url: 'http://feeds.bbci.co.uk/news/world/rss.xml', category: 'World News' },
   { name: 'TMZ', url: 'https://www.tmz.com/rss.xml', category: 'Celebrity Gossip' },
   { name: 'WikiHow', url: 'https://www.wikihow.com/feed.rss', category: 'How-To & DIY' },
-  { name: 'OpenAI Blog', url: 'https://openai.com/blog/rss.xml', category: 'AI & Machine Learning' },
   { name: 'ScienceDaily', url: 'https://www.sciencedaily.com/rss/all.xml', category: 'Science' },
   { name: 'Yahoo! Sports', url: 'https://sports.yahoo.com/rss/', category: 'Sports' },
 ];
@@ -53,19 +53,21 @@ async function checkRateLimit(request, env) {
   const windowMs = 15 * 60 * 1000; // 15 minutes
   const maxRequests = 100;
 
-  let data = await env.KV.get(key, { type: 'json' }) || { count: 0, reset: now + windowMs };
+  let data = (await env.KV.get(key, { type: 'json' })) || { count: 0, reset: now + windowMs };
   if (now > data.reset) {
     data = { count: 0, reset: now + windowMs };
   }
   if (data.count >= maxRequests) {
-    return new Response(JSON.stringify({ error: 'Rate limit exceeded' }), {
-      status: 429,
-      headers: { 'Content-Type': 'application/json' },
-    });
+    return new Response(
+      JSON.stringify({ error: 'Rate limit exceeded' }),
+      {
+        status: 429,
+        headers: { 'Content-Type': 'application/json' },
+      }
+    );
   }
   data.count++;
-  // Write async without delaying response
-  env.KV.put(key, JSON.stringify(data), { expirationTtl: Math.floor(windowMs / 1000) });
+  await env.KV.put(key, JSON.stringify(data), { expirationTtl: Math.floor(windowMs / 1000) });
   return null;
 }
 
@@ -82,9 +84,10 @@ function deduplicateArticles(articles) {
 function applySearchFilter(articles, search) {
   if (!search) return articles;
   const lowerSearch = search.toLowerCase();
-  return articles.filter(a =>
-    a.title.toLowerCase().includes(lowerSearch) ||
-    a.description.toLowerCase().includes(lowerSearch)
+  return articles.filter(
+    a =>
+      a.title.toLowerCase().includes(lowerSearch) ||
+      a.description.toLowerCase().includes(lowerSearch)
   );
 }
 
@@ -108,21 +111,8 @@ function paginate(articles, limit = 20, page = 1) {
   return articles.slice(start, start + limit);
 }
 
-// Cache API helper: get and put response caching at edge
-async function getCachedResponse(cacheKey) {
-  const cache = caches.default;
-  const cached = await cache.match(cacheKey);
-  if (cached) return cached;
-  return null;
-}
-
-async function putCachedResponse(cacheKey, response) {
-  const cache = caches.default;
-  event.waitUntil(cache.put(cacheKey, response.clone()));
-}
-
 export default {
-  async fetch(request, env, event) {
+  async fetch(request, env) {
     const corsHeaders = {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET, OPTIONS',
@@ -130,143 +120,168 @@ export default {
       'Access-Control-Max-Age': '86400',
     };
 
-    if (request.method === 'OPTIONS') {
-      return new Response(null, { headers: corsHeaders });
-    }
+    try {
+      if (request.method === 'OPTIONS') {
+        return new Response(null, { headers: corsHeaders });
+      }
 
-    // Rate limit check
-    const rateLimitResponse = await checkRateLimit(request, env);
-    if (rateLimitResponse) return rateLimitResponse;
+      // Rate limit check
+      const rateLimitResponse = await checkRateLimit(request, env);
+      if (rateLimitResponse) return rateLimitResponse;
 
-    const url = new URL(request.url);
-    const path = url.pathname;
+      const url = new URL(request.url);
+      const path = url.pathname;
 
-    const params = url.searchParams;
-    const limit = Math.min(parseInt(params.get('limit')) || 20, 100);
-    const page = Math.max(parseInt(params.get('page')) || 1, 1);
-    const search = params.get('search') || '';
-    const sort = params.get('sort') || 'pubDate'; // pubDate or title
-    const order = (params.get('order') || 'desc').toLowerCase(); // asc or desc
+      const params = url.searchParams;
+      const limit = Math.min(parseInt(params.get('limit')) || 20, 100);
+      const page = Math.max(parseInt(params.get('page')) || 1, 1);
+      const search = params.get('search') || '';
+      const sort = params.get('sort') || 'pubDate'; // pubDate or title
+      const order = (params.get('order') || 'desc').toLowerCase(); // asc or desc
 
-    if (path.startsWith('/api/news')) {
-      const category = path.split('/')[3] ? decodeURIComponent(path.split('/')[3]) : null;
-      const cacheKey = category ? `news_${slugify(category)}` : 'news_all';
+      if (path.startsWith('/api/news')) {
+        const parts = path.split('/');
+        const category = parts[3] ? decodeURIComponent(parts[3]) : null;
+        const cacheKey = category ? `news_${slugify(category)}` : 'news_all';
 
-      // Try to get cached response from edge cache first
-      const cachedResponse = await getCachedResponse(cacheKey);
-      if (cachedResponse) return cachedResponse;
+        let articles = await env.KV.get(cacheKey, { type: 'json' });
+        if (!articles) {
+          const feedsToFetch = category
+            ? RSS_FEEDS.filter(feed => feed.category.toLowerCase() === category.toLowerCase())
+            : RSS_FEEDS;
 
-      // If no edge cache, fallback to KV
-      let articles = await env.KV.get(cacheKey, { type: 'json' });
-      if (!articles) {
-        const feedsToFetch = category
-          ? RSS_FEEDS.filter(feed => feed.category.toLowerCase() === category.toLowerCase())
-          : RSS_FEEDS;
+          if (!feedsToFetch.length) {
+            return new Response(
+              JSON.stringify({ error: 'Category not found' }),
+              { status: 404, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
+            );
+          }
 
-        if (!feedsToFetch.length) {
-          return new Response(JSON.stringify({ error: 'Category not found' }), { status: 404, headers: { 'Content-Type': 'application/json', ...corsHeaders } });
+          const feedPromises = feedsToFetch.map(async feed => {
+            const parsedArticles = await parseRSSFeed(feed.url);
+            return parsedArticles.map(article => ({
+              ...article,
+              category: feed.category,
+              source: feed.name,
+            }));
+          });
+
+          articles = (await Promise.all(feedPromises)).flat();
+          articles = deduplicateArticles(articles);
+          articles.sort((a, b) => {
+            const dateA = new Date(a.pubDate).getTime() || 0;
+            const dateB = new Date(b.pubDate).getTime() || 0;
+            return dateB - dateA;
+          });
+
+          await env.KV.put(cacheKey, JSON.stringify(articles), { expirationTtl: 600 });
         }
 
-        const feedPromises = feedsToFetch.map(async feed => {
-          const parsedArticles = await parseRSSFeed(feed.url);
-          return parsedArticles.map(article => ({
+        articles = applySearchFilter(articles, search);
+        articles = applySorting(articles, sort, order);
+        const paginated = paginate(articles, limit, page);
+
+        return new Response(
+          JSON.stringify({
+            page,
+            limit,
+            totalResults: articles.length,
+            totalPages: Math.ceil(articles.length / limit),
+            articles: paginated,
+          }),
+          {
+            headers: { 'Content-Type': 'application/json', ...corsHeaders },
+          }
+        );
+      }
+
+      if (path === '/api/categories') {
+        const categories = [...new Set(RSS_FEEDS.map(feed => feed.category))];
+        return new Response(JSON.stringify(categories), {
+          headers: { 'Content-Type': 'application/json', ...corsHeaders },
+        });
+      }
+
+      if (path.startsWith('/api/source/')) {
+        const parts = path.split('/');
+        const source = parts[3] ? decodeURIComponent(parts[3]) : '';
+        if (!source) {
+          return new Response(
+            JSON.stringify({ error: 'Source required' }),
+            { status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
+          );
+        }
+        const cacheKey = `source_${slugify(source)}`;
+
+        let articles = await env.KV.get(cacheKey, { type: 'json' });
+        if (!articles) {
+          const feed = RSS_FEEDS.find(f => f.name.toLowerCase() === source.toLowerCase());
+          if (!feed) {
+            return new Response(
+              JSON.stringify({ error: 'Source not found' }),
+              { status: 404, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
+            );
+          }
+
+          articles = await parseRSSFeed(feed.url);
+          articles = articles.map(article => ({
             ...article,
             category: feed.category,
             source: feed.name,
           }));
-        });
 
-        articles = (await Promise.all(feedPromises)).flat();
-        articles = deduplicateArticles(articles);
-        articles.sort((a, b) => {
-          const dateA = new Date(a.pubDate).getTime() || 0;
-          const dateB = new Date(b.pubDate).getTime() || 0;
-          return dateB - dateA;
-        });
+          articles = deduplicateArticles(articles);
 
-        // Store in KV async, no await so response not blocked
-        event.waitUntil(env.KV.put(cacheKey, JSON.stringify(articles), { expirationTtl: 600 }));
-      }
+          articles.sort((a, b) => {
+            const dateA = new Date(a.pubDate).getTime() || 0;
+            const dateB = new Date(b.pubDate).getTime() || 0;
+            return dateB - dateA;
+          });
 
-      let filtered = applySearchFilter(articles, search);
-      filtered = applySorting(filtered, sort, order);
-      const paginated = paginate(filtered, limit, page);
-
-      const jsonResponse = new Response(JSON.stringify({
-        page,
-        limit,
-        totalResults: filtered.length,
-        totalPages: Math.ceil(filtered.length / limit),
-        articles: paginated,
-      }), { headers: { 'Content-Type': 'application/json', ...corsHeaders } });
-
-      // Cache the response at edge for next requests
-      event.waitUntil(putCachedResponse(cacheKey, jsonResponse.clone()));
-
-      return jsonResponse;
-    }
-
-    if (path === '/api/categories') {
-      const categories = [...new Set(RSS_FEEDS.map(feed => feed.category))];
-      return new Response(JSON.stringify(categories), { headers: { 'Content-Type': 'application/json', ...corsHeaders } });
-    }
-
-    if (path.startsWith('/api/source/')) {
-      const source = decodeURIComponent(path.split('/')[3] || '');
-      if (!source) {
-        return new Response(JSON.stringify({ error: 'Source required' }), { status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders } });
-      }
-      const cacheKey = `source_${slugify(source)}`;
-
-      const cachedResponse = await getCachedResponse(cacheKey);
-      if (cachedResponse) return cachedResponse;
-
-      let articles = await env.KV.get(cacheKey, { type: 'json' });
-      if (!articles) {
-        const feed = RSS_FEEDS.find(f => f.name.toLowerCase() === source.toLowerCase());
-        if (!feed) {
-          return new Response(JSON.stringify({ error: 'Source not found' }), { status: 404, headers: { 'Content-Type': 'application/json', ...corsHeaders } });
+          await env.KV.put(cacheKey, JSON.stringify(articles), { expirationTtl: 600 });
         }
 
-        articles = await parseRSSFeed(feed.url);
-        articles = articles.map(article => ({
-          ...article,
-          category: feed.category,
-          source: feed.name,
-        }));
+        articles = applySearchFilter(articles, search);
+        articles = applySorting(articles, sort, order);
+        const paginated = paginate(articles, limit, page);
 
-        articles = deduplicateArticles(articles);
-        articles.sort((a, b) => {
-          const dateA = new Date(a.pubDate).getTime() || 0;
-          const dateB = new Date(b.pubDate).getTime() || 0;
-          return dateB - dateA;
-        });
-
-        event.waitUntil(env.KV.put(cacheKey, JSON.stringify(articles), { expirationTtl: 600 }));
+        return new Response(
+          JSON.stringify({
+            page,
+            limit,
+            totalResults: articles.length,
+            totalPages: Math.ceil(articles.length / limit),
+            articles: paginated,
+          }),
+          {
+            headers: { 'Content-Type': 'application/json', ...corsHeaders },
+          }
+        );
       }
 
-      let filtered = applySearchFilter(articles, search);
-      filtered = applySorting(filtered, sort, order);
-      const paginated = paginate(filtered, limit, page);
+      if (path === '/api/sources') {
+        const sources = RSS_FEEDS.map(feed => ({ name: feed.name, category: feed.category }));
+        return new Response(JSON.stringify(sources), {
+          headers: { 'Content-Type': 'application/json', ...corsHeaders },
+        });
+      }
 
-      const jsonResponse = new Response(JSON.stringify({
-        page,
-        limit,
-        totalResults: filtered.length,
-        totalPages: Math.ceil(filtered.length / limit),
-        articles: paginated,
-      }), { headers: { 'Content-Type': 'application/json', ...corsHeaders } });
-
-      event.waitUntil(putCachedResponse(cacheKey, jsonResponse.clone()));
-
-      return jsonResponse;
+      return new Response(
+        JSON.stringify({ error: 'Not found' }),
+        { status: 404, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
+      );
+    } catch (error) {
+      console.error('Worker error:', error);
+      return new Response(
+        JSON.stringify({ error: 'Internal Server Error', message: error.message }),
+        {
+          status: 500,
+          headers: {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*',
+          },
+        }
+      );
     }
-
-    if (path === '/api/sources') {
-      const sources = RSS_FEEDS.map(feed => ({ name: feed.name, category: feed.category }));
-      return new Response(JSON.stringify(sources), { headers: { 'Content-Type': 'application/json', ...corsHeaders } });
-    }
-
-    return new Response(JSON.stringify({ error: 'Not found' }), { status: 404, headers: { 'Content-Type': 'application/json', ...corsHeaders } });
   },
 };
