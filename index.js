@@ -1,8 +1,10 @@
 import Parser from 'rss-parser';
 const parser = new Parser();
 
-const slugify = str => str.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
-const stripHTML = html => html ? html.replace(/<[^>]+>/g, '').trim() : '';
+const slugify = str =>
+  str.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
+
+const stripHTML = html => (html ? html.replace(/<[^>]+>/g, '').trim() : '');
 
 async function fetchWithTimeout(url, ms = 8000) {
   const controller = new AbortController();
@@ -20,19 +22,21 @@ const RSS_FEEDS = [
     name: 'BBC News - World',
     url: 'https://feeds.bbci.co.uk/news/world/rss.xml',
     category: 'News',
-    description: 'International news, features, and analysis from regions like Africa, Asia-Pacific, Europe, and more.'
+    description:
+      'International news, features, and analysis from regions like Africa, Asia-Pacific, Europe, and more.',
   },
   {
     name: 'The New York Times - World',
     url: 'https://www.nytimes.com/svc/collections/v1/publish/www.nytimes.com/section/world/rss.xml',
     category: 'News',
-    description: 'Breaking news and multimedia on global events, covering Africa, Asia, Europe, and the Middle East.'
+    description:
+      'Breaking news and multimedia on global events, covering Africa, Asia, Europe, and the Middle East.',
   },
   {
     name: 'CNN - Top Stories',
     url: 'https://rss.cnn.com/rss/edition_world.rss',
     category: 'News',
-    description: 'Top stories and breaking news from a major global news outlet.'
+    description: 'Top stories and breaking news from a major global news outlet.',
   },
 
   // Technology
@@ -40,19 +44,22 @@ const RSS_FEEDS = [
     name: 'TechCrunch',
     url: 'https://techcrunch.com/feed',
     category: 'Technology',
-    description: 'Covers startups, internet products, and breaking tech news with in-depth reporting.'
+    description:
+      'Covers startups, internet products, and breaking tech news with in-depth reporting.',
   },
   {
     name: 'Wired',
     url: 'https://www.wired.com/feed/rss',
     category: 'Technology',
-    description: 'Focuses on emerging technologies, their impact on culture, economy, and politics.'
+    description:
+      'Focuses on emerging technologies, their impact on culture, economy, and politics.',
   },
   {
     name: 'The Verge',
     url: 'https://www.theverge.com/rss/index.xml',
     category: 'Technology',
-    description: 'In-depth reporting on technology, science, art, and culture with product reviews.'
+    description:
+      'In-depth reporting on technology, science, art, and culture with product reviews.',
   },
 
   // Lifestyle
@@ -60,13 +67,15 @@ const RSS_FEEDS = [
     name: 'Apartment Therapy',
     url: 'https://www.apartmenttherapy.com/main.rss',
     category: 'Lifestyle',
-    description: 'Covers lifestyle and interior design with DIY tips, home tours, and shopping guides.'
+    description:
+      'Covers lifestyle and interior design with DIY tips, home tours, and shopping guides.',
   },
   {
     name: 'Cup of Jo',
     url: 'https://feeds.feedburner.com/blogspot/cupofjo',
     category: 'Lifestyle',
-    description: 'A daily blog on fashion, beauty, design, food, and parenting with personal stories.'
+    description:
+      'A daily blog on fashion, beauty, design, food, and parenting with personal stories.',
   },
 
   // Entertainment
@@ -74,13 +83,15 @@ const RSS_FEEDS = [
     name: 'Billboard',
     url: 'https://www.billboard.com/feed',
     category: 'Entertainment',
-    description: 'Music industry news, charts, and updates with a focus on artists and trends.'
+    description:
+      'Music industry news, charts, and updates with a focus on artists and trends.',
   },
   {
     name: 'NME',
     url: 'https://www.nme.com/feed',
     category: 'Entertainment',
-    description: 'Music and pop culture news, reviews, videos, and band features.'
+    description:
+      'Music and pop culture news, reviews, videos, and band features.',
   },
 
   // Business
@@ -88,28 +99,31 @@ const RSS_FEEDS = [
     name: 'Harvard Business Review',
     url: 'https://feeds.hbr.org/harvardbusiness',
     category: 'Business',
-    description: 'Insights on strategy, innovation, and leadership for business professionals.'
+    description:
+      'Insights on strategy, innovation, and leadership for business professionals.',
   },
   {
     name: 'Entrepreneur',
     url: 'https://www.entrepreneur.com/latest.rss',
     category: 'Business',
-    description: 'News, tips, and tools for entrepreneurs to build and grow businesses.'
+    description:
+      'News, tips, and tools for entrepreneurs to build and grow businesses.',
   },
 
-  // Podcasts (note: mostly not public RSS feeds)
-  // Joe Rogan is not public; This American Life has an RSS:
+  // Podcasts
   {
     name: 'This American Life',
     url: 'https://feeds.thisamericanlife.org/talpodcast',
     category: 'Podcasts',
-    description: 'Storytelling and journalism with a wide range of topics and voices.'
+    description:
+      'Storytelling and journalism with a wide range of topics and voices.',
   },
 ];
 
+// Parse and clean RSS feed into articles
 async function parseRSSFeed(url) {
   try {
-    const response = await fetchWithTimeout(url, 8000);
+    const response = await fetchWithTimeout(url);
     if (!response.ok) throw new Error(`HTTP error ${response.status}`);
     const text = await response.text();
     const feed = await parser.parseString(text);
@@ -126,16 +140,17 @@ async function parseRSSFeed(url) {
   }
 }
 
+// Rate limiting per IP & path (15 mins window, 100 requests max)
 async function checkRateLimit(request, env) {
   const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
   const path = new URL(request.url).pathname;
   const key = `rate_limit_${ip}_${slugify(path)}`;
 
   const now = Date.now();
-  const windowMs = 15 * 60 * 1000; // 15 minutes
+  const windowMs = 15 * 60 * 1000;
   const maxRequests = 100;
 
-  let data = await env.KV.get(key, { type: 'json' }) || { count: 0, reset: now + windowMs };
+  let data = (await env.KV.get(key, { type: 'json' })) || { count: 0, reset: now + windowMs };
   if (now > data.reset) {
     data = { count: 0, reset: now + windowMs };
   }
@@ -150,6 +165,7 @@ async function checkRateLimit(request, env) {
   return null;
 }
 
+// Remove duplicate articles by title+source+date
 function deduplicateArticles(articles) {
   const seen = new Set();
   return articles.filter(article => {
@@ -160,33 +176,64 @@ function deduplicateArticles(articles) {
   });
 }
 
+// Filter articles by search term in title or description
 function applySearchFilter(articles, search) {
   if (!search) return articles;
   const lowerSearch = search.toLowerCase();
-  return articles.filter(a =>
-    a.title.toLowerCase().includes(lowerSearch) ||
-    a.description.toLowerCase().includes(lowerSearch)
+  return articles.filter(
+    a =>
+      a.title.toLowerCase().includes(lowerSearch) ||
+      a.description.toLowerCase().includes(lowerSearch)
   );
 }
 
+// Sort articles by title or pubDate, asc or desc
 function applySorting(articles, sort, order) {
   const asc = order === 'asc';
   return articles.sort((a, b) => {
     if (sort === 'title') {
-      return asc
-        ? a.title.localeCompare(b.title)
-        : b.title.localeCompare(a.title);
+      return asc ? a.title.localeCompare(b.title) : b.title.localeCompare(a.title);
     }
-    // Default sort by pubDate descending
+    // Default: sort by pubDate descending
     const dateA = new Date(a.pubDate).getTime() || 0;
     const dateB = new Date(b.pubDate).getTime() || 0;
     return asc ? dateA - dateB : dateB - dateA;
   });
 }
 
+// Paginate articles by limit and page number
 function paginate(articles, limit = 20, page = 1) {
   const start = (page - 1) * limit;
   return articles.slice(start, start + limit);
+}
+
+// Fetch feeds, parse and cache articles with expiration TTL
+async function fetchFeedsAndCache(feeds, env, cacheKey) {
+  const feedPromises = feeds.map(async feed => {
+    const parsed = await parseRSSFeed(feed.url);
+    return parsed.map(article => ({
+      ...article,
+      category: feed.category,
+      source: feed.name,
+    }));
+  });
+  let articles = (await Promise.all(feedPromises)).flat();
+  articles = deduplicateArticles(articles);
+  articles.sort((a, b) => new Date(b.pubDate) - new Date(a.pubDate));
+  await env.KV.put(cacheKey, JSON.stringify(articles), { expirationTtl: 600 });
+  return articles;
+}
+
+// Serve cached articles immediately and trigger async refresh
+async function fetchAndCacheFeeds(feeds, env, cacheKey) {
+  const cached = await env.KV.get(cacheKey, { type: 'json' });
+  if (cached) {
+    // Refresh cache in background, no await to avoid delaying response
+    fetchFeedsAndCache(feeds, env, cacheKey).catch(console.error);
+    return cached;
+  }
+  // No cache, fetch directly
+  return await fetchFeedsAndCache(feeds, env, cacheKey);
 }
 
 export default {
@@ -209,7 +256,7 @@ export default {
     const url = new URL(request.url);
     const path = url.pathname;
 
-    // Parse query params for pagination, search, sort
+    // Parse query params
     const params = url.searchParams;
     const limit = Math.min(parseInt(params.get('limit')) || 20, 100);
     const page = Math.max(parseInt(params.get('page')) || 1, 1);
@@ -217,114 +264,99 @@ export default {
     const sort = params.get('sort') || 'pubDate'; // pubDate or title
     const order = (params.get('order') || 'desc').toLowerCase(); // asc or desc
 
+    // Route: /api/news/:category?
     if (path.startsWith('/api/news')) {
-      const category = path.split('/')[3] ? decodeURIComponent(path.split('/')[3]) : null;
+      const parts = path.split('/');
+      const category = parts[3] ? decodeURIComponent(parts[3]) : null;
       const cacheKey = category ? `news_${slugify(category)}` : 'news_all';
 
-      let articles = await env.KV.get(cacheKey, { type: 'json' });
-      if (!articles) {
-        const feedsToFetch = category
-          ? RSS_FEEDS.filter(feed => feed.category.toLowerCase() === category.toLowerCase())
-          : RSS_FEEDS;
+      const feedsToFetch = category
+        ? RSS_FEEDS.filter(feed => feed.category.toLowerCase() === category.toLowerCase())
+        : RSS_FEEDS;
 
-        if (!feedsToFetch.length) {
-          return new Response(JSON.stringify({ error: 'Category not found' }), { status: 404, headers: { 'Content-Type': 'application/json', ...corsHeaders } });
-        }
-
-        const feedPromises = feedsToFetch.map(async feed => {
-          const parsedArticles = await parseRSSFeed(feed.url);
-          return parsedArticles.map(article => ({
-            ...article,
-            category: feed.category,
-            source: feed.name,
-          }));
-        });
-
-        articles = (await Promise.all(feedPromises)).flat();
-
-        articles = deduplicateArticles(articles);
-
-        articles.sort((a, b) => {
-          const dateA = new Date(a.pubDate).getTime() || 0;
-          const dateB = new Date(b.pubDate).getTime() || 0;
-          return dateB - dateA;
-        });
-
-        await env.KV.put(cacheKey, JSON.stringify(articles), { expirationTtl: 600 });
+      if (category && feedsToFetch.length === 0) {
+        return new Response(
+          JSON.stringify({ error: 'Category not found' }),
+          { status: 404, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
+        );
       }
+
+      let articles = await fetchAndCacheFeeds(feedsToFetch, env, cacheKey);
 
       articles = applySearchFilter(articles, search);
       articles = applySorting(articles, sort, order);
       const paginated = paginate(articles, limit, page);
 
-      return new Response(JSON.stringify({
-        page,
-        limit,
-        totalResults: articles.length,
-        totalPages: Math.ceil(articles.length / limit),
-        articles: paginated,
-      }), {
-        headers: { 'Content-Type': 'application/json', ...corsHeaders }
-      });
+      return new Response(
+        JSON.stringify({
+          page,
+          limit,
+          totalResults: articles.length,
+          totalPages: Math.ceil(articles.length / limit),
+          articles: paginated,
+        }),
+        { headers: { 'Content-Type': 'application/json', ...corsHeaders } }
+      );
     }
 
+    // Route: /api/categories
     if (path === '/api/categories') {
       const categories = [...new Set(RSS_FEEDS.map(feed => feed.category))];
-      return new Response(JSON.stringify(categories), { headers: { 'Content-Type': 'application/json', ...corsHeaders } });
+      return new Response(JSON.stringify(categories), {
+        headers: { 'Content-Type': 'application/json', ...corsHeaders },
+      });
     }
 
+    // Route: /api/source/:source
     if (path.startsWith('/api/source/')) {
-      const source = decodeURIComponent(path.split('/')[3] || '');
+      const parts = path.split('/');
+      const source = parts[3] ? decodeURIComponent(parts[3]) : '';
       if (!source) {
-        return new Response(JSON.stringify({ error: 'Source required' }), { status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders } });
+        return new Response(
+          JSON.stringify({ error: 'Source required' }),
+          { status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
+        );
       }
       const cacheKey = `source_${slugify(source)}`;
+      const feed = RSS_FEEDS.find(f => f.name.toLowerCase() === source.toLowerCase());
 
-      let articles = await env.KV.get(cacheKey, { type: 'json' });
-      if (!articles) {
-        const feed = RSS_FEEDS.find(f => f.name.toLowerCase() === source.toLowerCase());
-        if (!feed) {
-          return new Response(JSON.stringify({ error: 'Source not found' }), { status: 404, headers: { 'Content-Type': 'application/json', ...corsHeaders } });
-        }
-
-        articles = await parseRSSFeed(feed.url);
-        articles = articles.map(article => ({
-          ...article,
-          category: feed.category,
-          source: feed.name,
-        }));
-
-        articles = deduplicateArticles(articles);
-
-        articles.sort((a, b) => {
-          const dateA = new Date(a.pubDate).getTime() || 0;
-          const dateB = new Date(b.pubDate).getTime() || 0;
-          return dateB - dateA;
-        });
-
-        await env.KV.put(cacheKey, JSON.stringify(articles), { expirationTtl: 600 });
+      if (!feed) {
+        return new Response(
+          JSON.stringify({ error: 'Source not found' }),
+          { status: 404, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
+        );
       }
+
+      let articles = await fetchAndCacheFeeds([feed], env, cacheKey);
 
       articles = applySearchFilter(articles, search);
       articles = applySorting(articles, sort, order);
       const paginated = paginate(articles, limit, page);
 
-      return new Response(JSON.stringify({
-        page,
-        limit,
-        totalResults: articles.length,
-        totalPages: Math.ceil(articles.length / limit),
-        articles: paginated,
-      }), {
-        headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      return new Response(
+        JSON.stringify({
+          page,
+          limit,
+          totalResults: articles.length,
+          totalPages: Math.ceil(articles.length / limit),
+          articles: paginated,
+        }),
+        { headers: { 'Content-Type': 'application/json', ...corsHeaders } }
+      );
+    }
+
+    // Route: /api/sources
+    if (path === '/api/sources') {
+      const sources = RSS_FEEDS.map(feed => ({ name: feed.name, category: feed.category }));
+      return new Response(JSON.stringify(sources), {
+        headers: { 'Content-Type': 'application/json', ...corsHeaders },
       });
     }
 
-    if (path === '/api/sources') {
-      const sources = RSS_FEEDS.map(feed => ({ name: feed.name, category: feed.category }));
-      return new Response(JSON.stringify(sources), { headers: { 'Content-Type': 'application/json', ...corsHeaders } });
-    }
-
-    return new Response(JSON.stringify({ error: 'Not found' }), { status: 404, headers: { 'Content-Type': 'application/json', ...corsHeaders } });
+    // Not found
+    return new Response(JSON.stringify({ error: 'Not found' }), {
+      status: 404,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
   },
 };
