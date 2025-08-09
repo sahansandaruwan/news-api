@@ -1,4 +1,4 @@
-name = "newsapis"
+name = "news-api"
 compatibility_date = "2025-08-08"
 compatibility_flags = ["nodejs_compat"]
 
@@ -10,7 +10,7 @@ main = "index.js"
 
 [[kv_namespaces]]
 binding = "KV"
-id = "064e6db92a46486fb41b2c42cf3d7dff" # Ensure this is correct
+id = "064e6db92a46486fb41b2c42cf3d7dff" # Update this with your actual KV namespace ID
 
 [triggers]
 crons = ["0 * * * *"]  # Run cache cleanup hourly
