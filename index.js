@@ -15,14 +15,96 @@ async function fetchWithTimeout(url, ms = 8000) {
 }
 
 const RSS_FEEDS = [
-  { name: 'TechCrunch', url: 'https://techcrunch.com/feed/', category: 'Technology' },
-  { name: 'Wired', url: 'https://www.wired.com/feed/rss', category: 'Technology' },
-  { name: 'BBC World', url: 'http://feeds.bbci.co.uk/news/world/rss.xml', category: 'World News' },
-  { name: 'TMZ', url: 'https://www.tmz.com/rss.xml', category: 'Celebrity Gossip' },
-  { name: 'WikiHow', url: 'https://www.wikihow.com/feed.rss', category: 'How-To & DIY' },
-  { name: 'OpenAI Blog', url: 'https://openai.com/blog/rss.xml', category: 'AI & Machine Learning' },
-  { name: 'ScienceDaily', url: 'https://www.sciencedaily.com/rss/all.xml', category: 'Science' },
-  { name: 'Yahoo! Sports', url: 'https://sports.yahoo.com/rss/', category: 'Sports' },
+  // News
+  {
+    name: 'BBC News - World',
+    url: 'https://feeds.bbci.co.uk/news/world/rss.xml',
+    category: 'News',
+    description: 'International news, features, and analysis from regions like Africa, Asia-Pacific, Europe, and more.'
+  },
+  {
+    name: 'The New York Times - World',
+    url: 'https://www.nytimes.com/svc/collections/v1/publish/www.nytimes.com/section/world/rss.xml',
+    category: 'News',
+    description: 'Breaking news and multimedia on global events, covering Africa, Asia, Europe, and the Middle East.'
+  },
+  {
+    name: 'CNN - Top Stories',
+    url: 'https://rss.cnn.com/rss/edition_world.rss',
+    category: 'News',
+    description: 'Top stories and breaking news from a major global news outlet.'
+  },
+
+  // Technology
+  {
+    name: 'TechCrunch',
+    url: 'https://techcrunch.com/feed',
+    category: 'Technology',
+    description: 'Covers startups, internet products, and breaking tech news with in-depth reporting.'
+  },
+  {
+    name: 'Wired',
+    url: 'https://www.wired.com/feed/rss',
+    category: 'Technology',
+    description: 'Focuses on emerging technologies, their impact on culture, economy, and politics.'
+  },
+  {
+    name: 'The Verge',
+    url: 'https://www.theverge.com/rss/index.xml',
+    category: 'Technology',
+    description: 'In-depth reporting on technology, science, art, and culture with product reviews.'
+  },
+
+  // Lifestyle
+  {
+    name: 'Apartment Therapy',
+    url: 'https://www.apartmenttherapy.com/main.rss',
+    category: 'Lifestyle',
+    description: 'Covers lifestyle and interior design with DIY tips, home tours, and shopping guides.'
+  },
+  {
+    name: 'Cup of Jo',
+    url: 'https://feeds.feedburner.com/blogspot/cupofjo',
+    category: 'Lifestyle',
+    description: 'A daily blog on fashion, beauty, design, food, and parenting with personal stories.'
+  },
+
+  // Entertainment
+  {
+    name: 'Billboard',
+    url: 'https://www.billboard.com/feed',
+    category: 'Entertainment',
+    description: 'Music industry news, charts, and updates with a focus on artists and trends.'
+  },
+  {
+    name: 'NME',
+    url: 'https://www.nme.com/feed',
+    category: 'Entertainment',
+    description: 'Music and pop culture news, reviews, videos, and band features.'
+  },
+
+  // Business
+  {
+    name: 'Harvard Business Review',
+    url: 'https://feeds.hbr.org/harvardbusiness',
+    category: 'Business',
+    description: 'Insights on strategy, innovation, and leadership for business professionals.'
+  },
+  {
+    name: 'Entrepreneur',
+    url: 'https://www.entrepreneur.com/latest.rss',
+    category: 'Business',
+    description: 'News, tips, and tools for entrepreneurs to build and grow businesses.'
+  },
+
+  // Podcasts (note: mostly not public RSS feeds)
+  // Joe Rogan is not public; This American Life has an RSS:
+  {
+    name: 'This American Life',
+    url: 'https://feeds.thisamericanlife.org/talpodcast',
+    category: 'Podcasts',
+    description: 'Storytelling and journalism with a wide range of topics and voices.'
+  },
 ];
 
 async function parseRSSFeed(url) {
