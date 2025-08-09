@@ -64,7 +64,8 @@ async function checkRateLimit(request, env) {
     });
   }
   data.count++;
-  await env.KV.put(key, JSON.stringify(data), { expirationTtl: Math.floor(windowMs / 1000) });
+  // Write async without delaying response
+  env.KV.put(key, JSON.stringify(data), { expirationTtl: Math.floor(windowMs / 1000) });
   return null;
 }
 
@@ -107,8 +108,21 @@ function paginate(articles, limit = 20, page = 1) {
   return articles.slice(start, start + limit);
 }
 
+// Cache API helper: get and put response caching at edge
+async function getCachedResponse(cacheKey) {
+  const cache = caches.default;
+  const cached = await cache.match(cacheKey);
+  if (cached) return cached;
+  return null;
+}
+
+async function putCachedResponse(cacheKey, response) {
+  const cache = caches.default;
+  event.waitUntil(cache.put(cacheKey, response.clone()));
+}
+
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, event) {
     const corsHeaders = {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET, OPTIONS',
@@ -127,7 +141,6 @@ export default {
     const url = new URL(request.url);
     const path = url.pathname;
 
-    // Parse query params for pagination, search, sort
     const params = url.searchParams;
     const limit = Math.min(parseInt(params.get('limit')) || 20, 100);
     const page = Math.max(parseInt(params.get('page')) || 1, 1);
@@ -139,6 +152,11 @@ export default {
       const category = path.split('/')[3] ? decodeURIComponent(path.split('/')[3]) : null;
       const cacheKey = category ? `news_${slugify(category)}` : 'news_all';
 
+      // Try to get cached response from edge cache first
+      const cachedResponse = await getCachedResponse(cacheKey);
+      if (cachedResponse) return cachedResponse;
+
+      // If no edge cache, fallback to KV
       let articles = await env.KV.get(cacheKey, { type: 'json' });
       if (!articles) {
         const feedsToFetch = category
@@ -159,31 +177,33 @@ export default {
         });
 
         articles = (await Promise.all(feedPromises)).flat();
-
         articles = deduplicateArticles(articles);
-
         articles.sort((a, b) => {
           const dateA = new Date(a.pubDate).getTime() || 0;
           const dateB = new Date(b.pubDate).getTime() || 0;
           return dateB - dateA;
         });
 
-        await env.KV.put(cacheKey, JSON.stringify(articles), { expirationTtl: 600 });
+        // Store in KV async, no await so response not blocked
+        event.waitUntil(env.KV.put(cacheKey, JSON.stringify(articles), { expirationTtl: 600 }));
       }
 
-      articles = applySearchFilter(articles, search);
-      articles = applySorting(articles, sort, order);
-      const paginated = paginate(articles, limit, page);
+      let filtered = applySearchFilter(articles, search);
+      filtered = applySorting(filtered, sort, order);
+      const paginated = paginate(filtered, limit, page);
 
-      return new Response(JSON.stringify({
+      const jsonResponse = new Response(JSON.stringify({
         page,
         limit,
-        totalResults: articles.length,
-        totalPages: Math.ceil(articles.length / limit),
+        totalResults: filtered.length,
+        totalPages: Math.ceil(filtered.length / limit),
         articles: paginated,
-      }), {
-        headers: { 'Content-Type': 'application/json', ...corsHeaders }
-      });
+      }), { headers: { 'Content-Type': 'application/json', ...corsHeaders } });
+
+      // Cache the response at edge for next requests
+      event.waitUntil(putCachedResponse(cacheKey, jsonResponse.clone()));
+
+      return jsonResponse;
     }
 
     if (path === '/api/categories') {
@@ -197,6 +217,9 @@ export default {
         return new Response(JSON.stringify({ error: 'Source required' }), { status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders } });
       }
       const cacheKey = `source_${slugify(source)}`;
+
+      const cachedResponse = await getCachedResponse(cacheKey);
+      if (cachedResponse) return cachedResponse;
 
       let articles = await env.KV.get(cacheKey, { type: 'json' });
       if (!articles) {
@@ -213,29 +236,30 @@ export default {
         }));
 
         articles = deduplicateArticles(articles);
-
         articles.sort((a, b) => {
           const dateA = new Date(a.pubDate).getTime() || 0;
           const dateB = new Date(b.pubDate).getTime() || 0;
           return dateB - dateA;
         });
 
-        await env.KV.put(cacheKey, JSON.stringify(articles), { expirationTtl: 600 });
+        event.waitUntil(env.KV.put(cacheKey, JSON.stringify(articles), { expirationTtl: 600 }));
       }
 
-      articles = applySearchFilter(articles, search);
-      articles = applySorting(articles, sort, order);
-      const paginated = paginate(articles, limit, page);
+      let filtered = applySearchFilter(articles, search);
+      filtered = applySorting(filtered, sort, order);
+      const paginated = paginate(filtered, limit, page);
 
-      return new Response(JSON.stringify({
+      const jsonResponse = new Response(JSON.stringify({
         page,
         limit,
-        totalResults: articles.length,
-        totalPages: Math.ceil(articles.length / limit),
+        totalResults: filtered.length,
+        totalPages: Math.ceil(filtered.length / limit),
         articles: paginated,
-      }), {
-        headers: { 'Content-Type': 'application/json', ...corsHeaders }
-      });
+      }), { headers: { 'Content-Type': 'application/json', ...corsHeaders } });
+
+      event.waitUntil(putCachedResponse(cacheKey, jsonResponse.clone()));
+
+      return jsonResponse;
     }
 
     if (path === '/api/sources') {
