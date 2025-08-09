@@ -5,12 +5,11 @@ compatibility_flags = ["nodejs_compat"]
 main = "index.js"
 
 [vars]
-# Removed AI-related environment variables
-# You can add other needed env vars here, e.g. for R2 or keys unrelated to AI
+NEWS_IMAGE_PROXY = "https://sandaruwan-img-host.pages.dev/88976667.png" # Replace with your actual image proxy URL
 
 [[kv_namespaces]]
 binding = "KV"
-id = "064e6db92a46486fb41b2c42cf3d7dff" # Update this with your actual KV namespace ID
+id = "064e6db92a46486fb41b2c42cf3d7dff"  # Replace with your KV namespace ID
 
 [triggers]
-crons = ["0 * * * *"]  # Run cache cleanup hourly
+crons = ["0 * * * *"]  # Cache refresh every hour (can adjust)
