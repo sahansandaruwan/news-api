@@ -1,11 +1,8 @@
 import Parser from 'rss-parser';
 const parser = new Parser();
 
-const slugify = str =>
-  str.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
-
-const stripHTML = html =>
-  html ? html.replace(/<[^>]+>/g, '').trim() : '';
+const slugify = str => str.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
+const stripHTML = html => html ? html.replace(/<[^>]+>/g, '').trim() : '';
 
 async function fetchWithTimeout(url, ms = 8000) {
   const controller = new AbortController();
@@ -23,6 +20,7 @@ const RSS_FEEDS = [
   { name: 'BBC World', url: 'http://feeds.bbci.co.uk/news/world/rss.xml', category: 'World News' },
   { name: 'TMZ', url: 'https://www.tmz.com/rss.xml', category: 'Celebrity Gossip' },
   { name: 'WikiHow', url: 'https://www.wikihow.com/feed.rss', category: 'How-To & DIY' },
+  { name: 'OpenAI Blog', url: 'https://openai.com/blog/rss.xml', category: 'AI & Machine Learning' },
   { name: 'ScienceDaily', url: 'https://www.sciencedaily.com/rss/all.xml', category: 'Science' },
   { name: 'Yahoo! Sports', url: 'https://sports.yahoo.com/rss/', category: 'Sports' },
 ];
@@ -44,6 +42,30 @@ async function parseRSSFeed(url) {
     console.error(`Error parsing RSS feed ${url}:`, error.message);
     return [];
   }
+}
+
+async function checkRateLimit(request, env) {
+  const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
+  const path = new URL(request.url).pathname;
+  const key = `rate_limit_${ip}_${slugify(path)}`;
+
+  const now = Date.now();
+  const windowMs = 15 * 60 * 1000; // 15 minutes
+  const maxRequests = 100;
+
+  let data = await env.KV.get(key, { type: 'json' }) || { count: 0, reset: now + windowMs };
+  if (now > data.reset) {
+    data = { count: 0, reset: now + windowMs };
+  }
+  if (data.count >= maxRequests) {
+    return new Response(JSON.stringify({ error: 'Rate limit exceeded' }), {
+      status: 429,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+  data.count++;
+  await env.KV.put(key, JSON.stringify(data), { expirationTtl: Math.floor(windowMs / 1000) });
+  return null;
 }
 
 function deduplicateArticles(articles) {
@@ -73,6 +95,7 @@ function applySorting(articles, sort, order) {
         ? a.title.localeCompare(b.title)
         : b.title.localeCompare(a.title);
     }
+    // Default sort by pubDate descending
     const dateA = new Date(a.pubDate).getTime() || 0;
     const dateB = new Date(b.pubDate).getTime() || 0;
     return asc ? dateA - dateB : dateB - dateA;
@@ -84,119 +107,70 @@ function paginate(articles, limit = 20, page = 1) {
   return articles.slice(start, start + limit);
 }
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type',
-  'Access-Control-Max-Age': '86400',
-};
-
 export default {
-  async scheduled(event, env) {
-    // Fetch all feeds in parallel
-    const promises = RSS_FEEDS.map(async feed => {
-      try {
-        const articles = await parseRSSFeed(feed.url);
-        const enriched = articles.map(article => ({
-          ...article,
-          category: feed.category,
-          source: feed.name,
-        }));
-        const deduped = deduplicateArticles(enriched);
-        deduped.sort((a, b) => {
-          const dateA = new Date(a.pubDate).getTime() || 0;
-          const dateB = new Date(b.pubDate).getTime() || 0;
-          return dateB - dateA;
-        });
-        await env.KV.put(`feed_${slugify(feed.name)}`, JSON.stringify(deduped), { expirationTtl: 3600 });
-      } catch (e) {
-        console.error(`Error caching feed ${feed.name}:`, e.message);
-      }
-    });
-
-    await Promise.all(promises);
-  },
-
   async fetch(request, env) {
+    const corsHeaders = {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type',
+      'Access-Control-Max-Age': '86400',
+    };
+
     if (request.method === 'OPTIONS') {
       return new Response(null, { headers: corsHeaders });
     }
 
+    // Rate limit check
+    const rateLimitResponse = await checkRateLimit(request, env);
+    if (rateLimitResponse) return rateLimitResponse;
+
     const url = new URL(request.url);
     const path = url.pathname;
-    const params = url.searchParams;
 
+    // Parse query params for pagination, search, sort
+    const params = url.searchParams;
     const limit = Math.min(parseInt(params.get('limit')) || 20, 100);
     const page = Math.max(parseInt(params.get('page')) || 1, 1);
     const search = params.get('search') || '';
-    const sort = params.get('sort') || 'pubDate';
-    const order = (params.get('order') || 'desc').toLowerCase();
+    const sort = params.get('sort') || 'pubDate'; // pubDate or title
+    const order = (params.get('order') || 'desc').toLowerCase(); // asc or desc
 
     if (path.startsWith('/api/news')) {
-      const parts = path.split('/');
-      const category = parts[3] ? decodeURIComponent(parts[3]) : null;
+      const category = path.split('/')[3] ? decodeURIComponent(path.split('/')[3]) : null;
+      const cacheKey = category ? `news_${slugify(category)}` : 'news_all';
 
-      let cachedArticles = [];
+      let articles = await env.KV.get(cacheKey, { type: 'json' });
+      if (!articles) {
+        const feedsToFetch = category
+          ? RSS_FEEDS.filter(feed => feed.category.toLowerCase() === category.toLowerCase())
+          : RSS_FEEDS;
 
-      if (category) {
-        const feedsForCategory = RSS_FEEDS.filter(f => f.category.toLowerCase() === category.toLowerCase());
-        if (feedsForCategory.length === 0) {
+        if (!feedsToFetch.length) {
           return new Response(JSON.stringify({ error: 'Category not found' }), { status: 404, headers: { 'Content-Type': 'application/json', ...corsHeaders } });
         }
-        for (const feed of feedsForCategory) {
-          const cached = await env.KV.get(`feed_${slugify(feed.name)}`, { type: 'json' });
-          if (cached && Array.isArray(cached)) cachedArticles = cachedArticles.concat(cached);
-        }
-      } else {
-        for (const feed of RSS_FEEDS) {
-          const cached = await env.KV.get(`feed_${slugify(feed.name)}`, { type: 'json' });
-          if (cached && Array.isArray(cached)) cachedArticles = cachedArticles.concat(cached);
-        }
-      }
 
-      if (cachedArticles.length === 0) {
-        return new Response(JSON.stringify({ error: 'No cached articles available yet. Please try again later.' }), {
-          status: 503,
-          headers: { 'Content-Type': 'application/json', ...corsHeaders }
+        const feedPromises = feedsToFetch.map(async feed => {
+          const parsedArticles = await parseRSSFeed(feed.url);
+          return parsedArticles.map(article => ({
+            ...article,
+            category: feed.category,
+            source: feed.name,
+          }));
         });
-      }
 
-      cachedArticles = deduplicateArticles(cachedArticles);
-      cachedArticles = applySearchFilter(cachedArticles, search);
-      cachedArticles = applySorting(cachedArticles, sort, order);
-      const paginated = paginate(cachedArticles, limit, page);
+        articles = (await Promise.all(feedPromises)).flat();
 
-      return new Response(JSON.stringify({
-        page,
-        limit,
-        totalResults: cachedArticles.length,
-        totalPages: Math.ceil(cachedArticles.length / limit),
-        articles: paginated,
-      }), {
-        headers: { 'Content-Type': 'application/json', ...corsHeaders }
-      });
-    }
+        articles = deduplicateArticles(articles);
 
-    if (path.startsWith('/api/source')) {
-      const parts = path.split('/');
-      if (!parts[3]) {
-        return new Response(JSON.stringify({ error: 'Source required' }), { status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders } });
-      }
-      const source = decodeURIComponent(parts[3]);
-      const feed = RSS_FEEDS.find(f => f.name.toLowerCase() === source.toLowerCase());
-      if (!feed) {
-        return new Response(JSON.stringify({ error: 'Source not found' }), { status: 404, headers: { 'Content-Type': 'application/json', ...corsHeaders } });
-      }
-
-      const cachedArticles = await env.KV.get(`feed_${slugify(feed.name)}`, { type: 'json' });
-      if (!cachedArticles) {
-        return new Response(JSON.stringify({ error: 'No cached articles available yet. Please try again later.' }), {
-          status: 503,
-          headers: { 'Content-Type': 'application/json', ...corsHeaders }
+        articles.sort((a, b) => {
+          const dateA = new Date(a.pubDate).getTime() || 0;
+          const dateB = new Date(b.pubDate).getTime() || 0;
+          return dateB - dateA;
         });
+
+        await env.KV.put(cacheKey, JSON.stringify(articles), { expirationTtl: 600 });
       }
 
-      let articles = cachedArticles;
       articles = applySearchFilter(articles, search);
       articles = applySorting(articles, sort, order);
       const paginated = paginate(articles, limit, page);
@@ -213,22 +187,62 @@ export default {
     }
 
     if (path === '/api/categories') {
-      const categories = [...new Set(RSS_FEEDS.map(f => f.category))];
-      return new Response(JSON.stringify(categories), {
+      const categories = [...new Set(RSS_FEEDS.map(feed => feed.category))];
+      return new Response(JSON.stringify(categories), { headers: { 'Content-Type': 'application/json', ...corsHeaders } });
+    }
+
+    if (path.startsWith('/api/source/')) {
+      const source = decodeURIComponent(path.split('/')[3] || '');
+      if (!source) {
+        return new Response(JSON.stringify({ error: 'Source required' }), { status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders } });
+      }
+      const cacheKey = `source_${slugify(source)}`;
+
+      let articles = await env.KV.get(cacheKey, { type: 'json' });
+      if (!articles) {
+        const feed = RSS_FEEDS.find(f => f.name.toLowerCase() === source.toLowerCase());
+        if (!feed) {
+          return new Response(JSON.stringify({ error: 'Source not found' }), { status: 404, headers: { 'Content-Type': 'application/json', ...corsHeaders } });
+        }
+
+        articles = await parseRSSFeed(feed.url);
+        articles = articles.map(article => ({
+          ...article,
+          category: feed.category,
+          source: feed.name,
+        }));
+
+        articles = deduplicateArticles(articles);
+
+        articles.sort((a, b) => {
+          const dateA = new Date(a.pubDate).getTime() || 0;
+          const dateB = new Date(b.pubDate).getTime() || 0;
+          return dateB - dateA;
+        });
+
+        await env.KV.put(cacheKey, JSON.stringify(articles), { expirationTtl: 600 });
+      }
+
+      articles = applySearchFilter(articles, search);
+      articles = applySorting(articles, sort, order);
+      const paginated = paginate(articles, limit, page);
+
+      return new Response(JSON.stringify({
+        page,
+        limit,
+        totalResults: articles.length,
+        totalPages: Math.ceil(articles.length / limit),
+        articles: paginated,
+      }), {
         headers: { 'Content-Type': 'application/json', ...corsHeaders }
       });
     }
 
     if (path === '/api/sources') {
-      const sources = RSS_FEEDS.map(f => ({ name: f.name, category: f.category }));
-      return new Response(JSON.stringify(sources), {
-        headers: { 'Content-Type': 'application/json', ...corsHeaders }
-      });
+      const sources = RSS_FEEDS.map(feed => ({ name: feed.name, category: feed.category }));
+      return new Response(JSON.stringify(sources), { headers: { 'Content-Type': 'application/json', ...corsHeaders } });
     }
 
-    return new Response(JSON.stringify({ error: 'Not found' }), {
-      status: 404,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
+    return new Response(JSON.stringify({ error: 'Not found' }), { status: 404, headers: { 'Content-Type': 'application/json', ...corsHeaders } });
   },
 };
