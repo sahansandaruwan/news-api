@@ -1,15 +1,50 @@
 name = "news-api"
-compatibility_date = "2025-08-08"
-compatibility_flags = ["nodejs_compat"]   # << Add this line!
-
 main = "index.js"
+compatibility_date = "2025-08-08"
+compatibility_flags = ["nodejs_compat"]
 
+# Environment variables for external APIs (AI, Translation, etc.)
 [vars]
-# No additional environment variables needed
+OPENAI_API_KEY = "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"          # For AI summaries, sentiment analysis
+GOOGLE_TRANSLATE_API_KEY = "your-google-api-key"     # Optional: for language translation
+NEWS_IMAGE_PROXY = "https://your-image-proxy.com"    # Optional: to serve cached images
+TRENDING_WINDOW_HOURS = "24"                         # Time window for trending calculations
+MAX_ARTICLES_CACHE = "500"                           # Max articles stored in cache per feed
 
+# KV namespaces for different storage purposes
 [[kv_namespaces]]
 binding = "KV"
-id = "064e6db92a46486fb41b2c42cf3d7dff" # Must be updated after creating KV namespace
+id = "064e6db92a46486fb41b2c42cf3d7dff" # Default feed/article cache
 
+[[kv_namespaces]]
+binding = "USER_PREFERENCES"
+id = "10cc8fcba9c64c3aa6a7c349622bd51b" # Per-user settings, saved articles, etc.
+
+[[kv_namespaces]]
+binding = "TRENDING"
+id = "6720a129864042e78bb0afd6f3b79c47" # Store trending article scores
+
+# Optional R2 bucket for storing article images or full HTML content
+[[r2_buckets]]
+binding = "ARTICLE_ASSETS"
+bucket_name = "news-api-assets"
+preview_bucket_name = "news-api-assets-preview"
+
+# Scheduled jobs for background processing
 [triggers]
-crons = ["0 * * * *"] # Run cache cleanup hourly
+# Every hour: refresh stale feeds and trending scores
+crons = [
+  "0 * * * *",   # Refresh feeds
+  "*/30 * * * *" # Update trending scores every 30 mins
+]
+
+# Dev server config for local testing
+[dev]
+ip = "127.0.0.1"
+port = 8787
+local_protocol = "http"
+
+# Routes (optional, if deploying to a custom domain via Cloudflare)
+# [[routes]]
+# pattern = "api.yourdomain.com/*"
+# zone_id = "your-zone-id"
