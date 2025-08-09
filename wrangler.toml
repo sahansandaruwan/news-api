@@ -1,18 +1,16 @@
-name = "newsapis" # Make sure this matches your Cloudflare Worker name exactly
+name = "news-api"
 compatibility_date = "2025-08-08"
 compatibility_flags = ["nodejs_compat"]
 
 main = "index.js"
 
 [vars]
-# Add your environment variables here if needed
+# Removed AI-related environment variables
+# You can add other needed env vars here, e.g. for R2 or keys unrelated to AI
 
 [[kv_namespaces]]
 binding = "KV"
-id = "064e6db92a46486fb41b2c42cf3d7dff" # Replace with your KV namespace ID
+id = "064e6db92a46486fb41b2c42cf3d7dff" # Update this with your actual KV namespace ID
 
 [triggers]
-crons = ["0 * * * *"] # Cron trigger to run every hour (minute 0)
-
-[build]
-command = "npm install"
+crons = ["0 * * * *"]  # Run cache cleanup hourly
