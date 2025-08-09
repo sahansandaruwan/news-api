@@ -1,15 +1,18 @@
-name = "news-api"
+name = "newsapis" # Make sure this matches your Cloudflare Worker name exactly
 compatibility_date = "2025-08-08"
 compatibility_flags = ["nodejs_compat"]
 
 main = "index.js"
 
 [vars]
-NEWS_IMAGE_PROXY = "https://sandaruwan-img-host.pages.dev/88976667.png" # Replace with your actual image proxy URL
+# Add your environment variables here if needed
 
 [[kv_namespaces]]
 binding = "KV"
-id = "064e6db92a46486fb41b2c42cf3d7dff"  # Replace with your KV namespace ID
+id = "064e6db92a46486fb41b2c42cf3d7dff" # Replace with your KV namespace ID
 
 [triggers]
-crons = ["0 * * * *"]  # Cache refresh every hour (can adjust)
+crons = ["0 * * * *"] # Cron trigger to run every hour (minute 0)
+
+[build]
+command = "npm install"
