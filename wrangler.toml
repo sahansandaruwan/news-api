@@ -6,8 +6,6 @@ compatibility_flags = ["nodejs_compat"]
 # Environment variables for external APIs (AI, Translation, etc.)
 [vars]
 OPENAI_API_KEY = "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"          # For AI summaries, sentiment analysis
-GOOGLE_TRANSLATE_API_KEY = "your-google-api-key"     # Optional: for language translation
-NEWS_IMAGE_PROXY = "https://your-image-proxy.com"    # Optional: to serve cached images
 TRENDING_WINDOW_HOURS = "24"                         # Time window for trending calculations
 MAX_ARTICLES_CACHE = "500"                           # Max articles stored in cache per feed
 
@@ -24,11 +22,6 @@ id = "10cc8fcba9c64c3aa6a7c349622bd51b" # Per-user settings, saved articles, etc
 binding = "TRENDING"
 id = "6720a129864042e78bb0afd6f3b79c47" # Store trending article scores
 
-# Optional R2 bucket for storing article images or full HTML content
-[[r2_buckets]]
-binding = "ARTICLE_ASSETS"
-bucket_name = "news-api-assets"
-preview_bucket_name = "news-api-assets-preview"
 
 # Scheduled jobs for background processing
 [triggers]
