@@ -1,43 +1,16 @@
 name = "news-api"
-main = "index.js"
 compatibility_date = "2025-08-08"
 compatibility_flags = ["nodejs_compat"]
 
-# Environment variables for external APIs (AI, Translation, etc.)
-[vars]
-OPENAI_API_KEY = "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"          # For AI summaries, sentiment analysis
-TRENDING_WINDOW_HOURS = "24"                         # Time window for trending calculations
-MAX_ARTICLES_CACHE = "500"                           # Max articles stored in cache per feed
+main = "index.js"
 
-# KV namespaces for different storage purposes
+[vars]
+# Removed AI-related environment variables
+# You can add other needed env vars here, e.g. for R2 or keys unrelated to AI
+
 [[kv_namespaces]]
 binding = "KV"
-id = "064e6db92a46486fb41b2c42cf3d7dff" # Default feed/article cache
+id = "064e6db92a46486fb41b2c42cf3d7dff" # Update this with your actual KV namespace ID
 
-[[kv_namespaces]]
-binding = "USER_PREFERENCES"
-id = "10cc8fcba9c64c3aa6a7c349622bd51b" # Per-user settings, saved articles, etc.
-
-[[kv_namespaces]]
-binding = "TRENDING"
-id = "6720a129864042e78bb0afd6f3b79c47" # Store trending article scores
-
-
-# Scheduled jobs for background processing
 [triggers]
-# Every hour: refresh stale feeds and trending scores
-crons = [
-  "0 * * * *",   # Refresh feeds
-  "*/30 * * * *" # Update trending scores every 30 mins
-]
-
-# Dev server config for local testing
-[dev]
-ip = "127.0.0.1"
-port = 8787
-local_protocol = "http"
-
-# Routes (optional, if deploying to a custom domain via Cloudflare)
-# [[routes]]
-# pattern = "api.yourdomain.com/*"
-# zone_id = "your-zone-id"
+crons = ["0 * * * *"]  # Run cache cleanup hourly
