@@ -1,1 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>News API Tester - Smooth UI</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    /* Custom spinner */
+    .spinner {
+      border: 4px solid rgba(0, 0, 0, 0.1);
+      border-left-color: #3b82f6;
+      border-radius: 50%;
+      width: 24px;
+      height: 24px;
+      animation: spin 1s linear infinite;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body class="bg-gray-100 font-sans">
+  <div class="container mx-auto p-4 max-w-7xl">
+    <h1 class="text-3xl font-bold mb-6 text-center text-gray-800">News API Tester</h1>
 
+    <!-- Filters Section -->
+    <div class="bg-white p-6 rounded-lg shadow-md mb-6 transition-all duration-300 hover:shadow-lg">
+      <h2 class="text-xl font-semibold mb-4 text-gray-800">Filters</h2>
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <!-- Category Dropdown -->
+        <div class="relative">
+          <label for="category" class="block text-sm font-medium text-gray-700">Category</label>
+          <select id="category" class="mt-1 block w-full p-2 border rounded-md focus:ring-blue-500 focus:border-blue-500">
+            <option value="">All News</option>
+          </select>
+        </div>
+        <!-- Source Dropdown -->
+        <div class="relative">
+          <label for="source" class="block text-sm font-medium text-gray-700">Source</label>
+          <select id="source" class="mt-1 block w-full p-2 border rounded-md focus:ring-blue-500 focus:border-blue-500">
+            <option value="">Select a Source</option>
+          </select>
+        </div>
+        <!-- Search Input -->
+        <div class="relative">
+          <label for="search" class="block text-sm font-medium text-gray-700">Search</label>
+          <input id="search" type="text" placeholder="e.g., 'artificial intelligence' -robot" class="mt-1 block w-full p-2 border rounded-md focus:ring-blue-500 focus:border-blue-500">
+          <span class="absolute top-0 right-0 mt-1 mr-2 text-xs text-gray-500 cursor-help" title="Use quotes for phrases, - to exclude terms">?</span>
+        </div>
+        <!-- Start Date -->
+        <div>
+          <label for="startDate" class="block text-sm font-medium text-gray-700">Start Date</label>
+          <input id="startDate" type="date" class="mt-1 block w-full p-2 border rounded-md focus:ring-blue-500 focus:border-blue-500">
+        </div>
+        <!-- End Date -->
+        <div>
+          <label for="endDate" class="block text-sm font-medium text-gray-700">End Date</label>
+          <input id="endDate" type="date" class="mt-1 block w-full p-2 border rounded-md focus:ring-blue-500 focus:border-blue-500">
+        </div>
+        <!-- Sort By -->
+        <div>
+          <label for="sort" class="block text-sm font-medium text-gray-700">Sort By</label>
+          <select id="sort" class="mt-1 block w-full p-2 border rounded-md focus:ring-blue-500 focus:border-blue-500">
+            <option value="pubDate">Publication Date</option>
+            <option value="title">Title</option>
+          </select>
+        </div>
+        <!-- Order -->
+        <div>
+          <label for="order" class="block text-sm font-medium text-gray-700">Order</label>
+          <select id="order" class="mt-1 block w-full p-2 border rounded-md focus:ring-blue-500 focus:border-blue-500">
+            <option value="desc">Descending</option>
+            <option value="asc">Ascending</option>
+          </select>
+        </div>
+        <!-- Limit -->
+        <div>
+          <label for="limit" class="block text-sm font-medium text-gray-700">Articles per Page</label>
+          <select id="limit" class="mt-1 block w-full p-2 border rounded-md focus:ring-blue-500 focus:border-blue-500">
+            <option value="10">10</option>
+            <option value="20" selected>20</option>
+            <option value="50">50</option>
+          </select>
+        </div>
+      </div>
+      <div class="mt-4 flex justify-end space-x-2">
+        <button id="fetchButton" class="bg-blue-500 text-white p-2 rounded-md hover:bg-blue-600 flex items-center transition-colors duration-200">
+          <span>Fetch Articles</span>
+          <span id="fetchSpinner" class="ml-2 spinner hidden"></span>
+        </button>
+        <button id="refreshButton" class="bg-green-500 text-white p-2 rounded-md hover:bg-green-600 transition-colors duration-200">Refresh</button>
+      </div>
+    </div>
+
+    <!-- Cache Clear Section -->
+    <div class="bg-white p-6 rounded-lg shadow-md mb-6 transition-all duration-300 hover:shadow-lg">
+      <h2 class="text-xl font-semibold mb-4 text-gray-800">Clear Cache</h2>
+      <div class="flex flex-col sm:flex-row gap-4">
+        <input id="cacheKey" type="text" placeholder="e.g., news_all" class="p-2 border rounded-md flex-1 focus:ring-blue-500 focus:border-blue-500">
+        <input id="apiKey" type="password" placeholder="API Key (if required)" class="p-2 border rounded-md flex-1 focus:ring-blue-500 focus:border-blue-500">
+        <button id="clearCacheButton" class="bg-red-500 text-white p-2 rounded-md hover:bg-red-600 flex items-center transition-colors duration-200">
+          <span>Clear Cache</span>
+          <span id="clearSpinner" class="ml-2 spinner hidden"></span>
+        </button>
+      </div>
+      <p id="cacheMessage" class="mt-2 text-sm text-gray-600"></p>
+    </div>
+
+    <!-- Articles Section -->
+    <div class="bg-white p-6 rounded-lg shadow-md overflow-hidden transition-all duration-300 hover:shadow-lg">
+      <h2 class="text-xl font-semibold mb-4 text-gray-800">Articles</h2>
+      <div id="rateLimitInfo" class="mb-4 text-sm text-gray-600 bg-gray-100 p-2 rounded-md"></div>
+      <div id="metadata" class="mb-4 text-sm text-gray-600 bg-gray-100 p-2 rounded-md"></div>
+      <div class="overflow-x-auto">
+        <table class="w-full border-collapse table-auto">
+          <thead>
+            <tr class="bg-gray-200">
+              <th class="p-2 border text-left">Title</th>
+              <th class="p-2 border text-left">Source</th>
+              <th class="p-2 border text-left">Category</th>
+              <th class="p-2 border text-left">Description</th>
+              <th class="p-2 border text-left">Published</th>
+              <th class="p-2 border text-left">Link</th>
+            </tr>
+          </thead>
+          <tbody id="articlesBody">
+            <!-- Articles will be inserted here -->
+          </tbody>
+        </table>
+      </div>
+      <div id="articlesSpinner" class="flex justify-center my-4 hidden">
+        <div class="spinner w-8 h-8"></div>
+      </div>
+      <div class="mt-4 flex justify-between items-center">
+        <button id="prevPage" class="bg-gray-300 p-2 rounded-md hover:bg-gray-400 disabled:opacity-50 transition-colors duration-200" disabled>Previous</button>
+        <span id="paginationInfo" class="text-sm text-gray-600"></span>
+        <button id="nextPage" class="bg-gray-300 p-2 rounded-md hover:bg-gray-400 disabled:opacity-50 transition-colors duration-200" disabled>Next</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const API_BASE = 'https://newsapis.sahandev.workers.dev';
+
+    // Utility to show/hide loading
+    function toggleLoading(elementId, show) {
+      document.getElementById(elementId).classList.toggle('hidden', !show);
+    }
+
+    // Fetch categories
+    async function loadCategories() {
+      try {
+        const response = await fetch(`${API_BASE}/api/categories`);
+        if (!response.ok) throw new Error('Failed to load categories');
+        const categories = await response.json();
+        const categorySelect = document.getElementById('category');
+        categories.forEach(category => {
+          const option = document.createElement('option');
+          option.value = category.toLowerCase();
+          option.textContent = category;
+          categorySelect.appendChild(option);
+        });
+      } catch (error) {
+        console.error('Error loading categories:', error);
+        alert('Failed to load categories');
+      }
+    }
+
+    // Fetch sources
+    async function loadSources() {
+      try {
+        const response = await fetch(`${API_BASE}/api/sources`);
+        if (!response.ok) throw new Error('Failed to load sources');
+        const sources = await response.json();
+        const sourceSelect = document.getElementById('source');
+        sources.forEach(source => {
+          const option = document.createElement('option');
+          option.value = source.name.toLowerCase().replace(/\s+/g, '_');
+          option.textContent = `${source.name} (${source.category})`;
+          sourceSelect.appendChild(option);
+        });
+      } catch (error) {
+        console.error('Error loading sources:', error);
+        alert('Failed to load sources');
+      }
+    }
+
+    // Fetch articles
+    async function fetchArticles(page = 1) {
+      toggleLoading('fetchSpinner', true);
+      toggleLoading('articlesSpinner', true);
+      document.getElementById('fetchButton').disabled = true;
+      document.getElementById('refreshButton').disabled = true;
+
+      const category = document.getElementById('category').value;
+      const source = document.getElementById('source').value;
+      const search = document.getElementById('search').value;
+      const startDate = document.getElementById('startDate').value;
+      const endDate = document.getElementById('endDate').value;
+      const sort = document.getElementById('sort').value;
+      const order = document.getElementById('order').value;
+      const limit = document.getElementById('limit').value;
+
+      let url = source ? `${API_BASE}/api/source/${source}` : `${API_BASE}/api/news${category ? `/${category}` : ''}`;
+      const params = new URLSearchParams({ page, limit });
+      if (search) params.append('search', search);
+      if (startDate) params.append('startDate', startDate);
+      if (endDate) params.append('endDate', endDate);
+      if (sort) params.append('sort', sort);
+      if (order) params.append('order', order);
+
+      try {
+        const response = await fetch(`${url}?${params.toString()}`);
+        if (!response.ok) {
+          const error = await response.json();
+          throw new Error(error.error || 'Failed to fetch articles');
+        }
+        const data = await response.json();
+        displayArticles(data);
+      } catch (error) {
+        console.error('Error fetching articles:', error);
+        alert(error.message);
+        displayArticles({ articles: [], page: 1, limit, totalResults: 0, totalPages: 0 });
+      } finally {
+        toggleLoading('fetchSpinner', false);
+        toggleLoading('articlesSpinner', false);
+        document.getElementById('fetchButton').disabled = false;
+        document.getElementById('refreshButton').disabled = false;
+      }
+    }
+
+    // Display articles
+    function displayArticles(data) {
+      const { articles, page, limit, totalResults, totalPages, rateLimit, metadata } = data;
+      const articlesBody = document.getElementById('articlesBody');
+      const paginationInfo = document.getElementById('paginationInfo');
+      const prevPage = document.getElementById('prevPage');
+      const nextPage = document.getElementById('nextPage');
+      const rateLimitInfo = document.getElementById('rateLimitInfo');
+      const metadataDiv = document.getElementById('metadata');
+
+      articlesBody.innerHTML = '';
+      articles.forEach(article => {
+        const row = document.createElement('tr');
+        row.classList.add('hover:bg-gray-50', 'transition-colors', 'duration-200');
+        row.innerHTML = `
+          <td class="p-2 border">${article.title}</td>
+          <td class="p-2 border">${article.source}</td>
+          <td class="p-2 border">${article.category}</td>
+          <td class="p-2 border">${article.description}</td>
+          <td class="p-2 border">${article.pubDate ? new Date(article.pubDate).toLocaleString() : 'N/A'}</td>
+          <td class="p-2 border"><a href="${article.link}" target="_blank" class="text-blue-500 hover:underline">Read</a></td>
+        `;
+        articlesBody.appendChild(row);
+      });
+
+      paginationInfo.textContent = `Page ${page} of ${totalPages} (${totalResults} results)`;
+      prevPage.disabled = page <= 1;
+      nextPage.disabled = page >= totalPages;
+
+      rateLimitInfo.textContent = rateLimit
+        ? `Rate Limit: ${rateLimit.remaining} requests remaining, resets in ${rateLimit.reset} seconds`
+        : 'Rate limit info not available';
+
+      metadataDiv.innerHTML = metadata
+        ? `<h3 class="text-lg font-semibold mb-2">Feed Metadata</h3>` + metadata.map(m => `
+            <p class="mb-1"><strong>${m.title}</strong>: ${m.description} (Last updated: ${m.lastUpdated ? new Date(m.lastUpdated).toLocaleString() : 'N/A'})</p>
+          `).join('')
+        : '';
+    }
+
+    // Clear cache
+    async function clearCache() {
+      toggleLoading('clearSpinner', true);
+      document.getElementById('clearCacheButton').disabled = true;
+      const cacheKey = document.getElementById('cacheKey').value;
+      const apiKey = document.getElementById('apiKey').value;
+      const cacheMessage = document.getElementById('cacheMessage');
+
+      if (!cacheKey) {
+        cacheMessage.textContent = 'Error: Cache key is required';
+        toggleLoading('clearSpinner', false);
+        document.getElementById('clearCacheButton').disabled = false;
+        return;
+      }
+
+      try {
+        const headers = apiKey ? { 'Authorization': `Bearer ${apiKey}` } : {};
+        const response = await fetch(`${API_BASE}/api/cache/clear/${cacheKey}`, { method: 'POST', headers });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Failed to clear cache');
+        cacheMessage.textContent = data.message || 'Cache cleared successfully';
+        cacheMessage.classList.add('text-green-600');
+      } catch (error) {
+        console.error('Error clearing cache:', error);
+        cacheMessage.textContent = `Error: ${error.message}`;
+        cacheMessage.classList.add('text-red-600');
+      } finally {
+        toggleLoading('clearSpinner', false);
+        document.getElementById('clearCacheButton').disabled = false;
+        setTimeout(() => {
+          cacheMessage.textContent = '';
+          cacheMessage.classList.remove('text-green-600', 'text-red-600');
+        }, 5000);
+      }
+    }
+
+    // Event listeners
+    document.getElementById('fetchButton').addEventListener('click', () => fetchArticles(1));
+    document.getElementById('refreshButton').addEventListener('click', () => fetchArticles(1));
+    document.getElementById('prevPage').addEventListener('click', () => {
+      const currentPage = parseInt(document.getElementById('paginationInfo').textContent.match(/Page (\d+)/)?.[1] || 1);
+      fetchArticles(currentPage - 1);
+    });
+    document.getElementById('nextPage').addEventListener('click', () => {
+      const currentPage = parseInt(document.getElementById('paginationInfo').textContent.match(/Page (\d+)/)?.[1] || 1);
+      fetchArticles(currentPage + 1);
+    });
+    document.getElementById('clearCacheButton').addEventListener('click', clearCache);
+    document.getElementById('search').addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') fetchArticles(1);
+    });
+
+    // Initialize
+    loadCategories();
+    loadSources();
+    fetchArticles(1);
+  </script>
+</body>
+</html>
