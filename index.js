@@ -1,5 +1,5 @@
 import Parser from 'rss-parser';
-import sanitizeHtml from 'sanitize-html'; // New dependency for sanitizing inputs
+import sanitizeHtml from 'sanitize-html';
 
 const parser = new Parser();
 
@@ -12,7 +12,7 @@ const CONFIG = {
   MAX_ARTICLES_PER_FEED: 50,
   DEFAULT_LIMIT: 20,
   MAX_LIMIT: 100,
-  CACHE_VERSION: 'v1', // For cache invalidation on schema changes
+  CACHE_VERSION: 'v1',
 };
 
 // Utility functions
@@ -40,26 +40,20 @@ async function fetchWithTimeout(url, ms = CONFIG.FETCH_TIMEOUT_MS, retries = 2) 
   }
 }
 
-// RSS feed configuration (same as original, included for completeness)
+// RSS feed configuration (same as original)
 const RSS_FEEDS = [
-  // News
   { name: 'BBC News - World', url: 'https://feeds.bbci.co.uk/news/world/rss.xml', category: 'News', description: 'International news, features, and analysis from regions like Africa, Asia-Pacific, Europe, and more.' },
   { name: 'The New York Times - World', url: 'https://www.nytimes.com/svc/collections/v1/publish/www.nytimes.com/section/world/rss.xml', category: 'News', description: 'Breaking news and multimedia on global events, covering Africa, Asia, Europe, and the Middle East.' },
   { name: 'CNN - Top Stories', url: 'https://rss.cnn.com/rss/edition_world.rss', category: 'News', description: 'Top stories and breaking news from a major global news outlet.' },
-  // Technology
   { name: 'TechCrunch', url: 'https://techcrunch.com/feed', category: 'Technology', description: 'Covers startups, internet products, and breaking tech news with in-depth reporting.' },
   { name: 'Wired', url: 'https://www.wired.com/feed/rss', category: 'Technology', description: 'Focuses on emerging technologies, their impact on culture, economy, and politics.' },
   { name: 'The Verge', url: 'https://www.theverge.com/rss/index.xml', category: 'Technology', description: 'In-depth reporting on technology, science, art, and culture with product reviews.' },
-  // Lifestyle
   { name: 'Apartment Therapy', url: 'https://www.apartmenttherapy.com/main.rss', category: 'Lifestyle', description: 'Covers lifestyle and interior design with DIY tips, home tours, and shopping guides.' },
   { name: 'Cup of Jo', url: 'https://feeds.feedburner.com/blogspot/cupofjo', category: 'Lifestyle', description: 'A daily blog on fashion, beauty, design, food, and parenting with personal stories.' },
-  // Entertainment
   { name: 'Billboard', url: 'https://www.billboard.com/feed', category: 'Entertainment', description: 'Music industry news, charts, and updates with a focus on artists and trends.' },
   { name: 'NME', url: 'https://www.nme.com/feed', category: 'Entertainment', description: 'Music and pop culture news, reviews, videos, and band features.' },
-  // Business
   { name: 'Harvard Business Review', url: 'https://feeds.hbr.org/harvardbusiness', category: 'Business', description: 'Insights on strategy, innovation, and leadership for business professionals.' },
   { name: 'Entrepreneur', url: 'https://www.entrepreneur.com/latest.rss', category: 'Business', description: 'News, tips, and tools for entrepreneurs to build and grow businesses.' },
-  // Podcasts
   { name: 'This American Life', url: 'https://feeds.thisamericanlife.org/talpodcast', category: 'Podcasts', description: 'Storytelling and journalism with a wide range of topics and voices.' },
 ];
 
@@ -208,7 +202,7 @@ async function fetchAndCacheFeeds(feeds, env, cacheKey) {
   const cached = await env.KV.get(`${CONFIG.CACHE_VERSION}_${cacheKey}`, { type: 'json' });
   if (cached) {
     console.log(`Cache hit for ${cacheKey}`);
-    fetchFeedsAndCache(feeds, env, cacheKey).catch(console.error); // Background refresh
+    fetchFeedsAndCache(feeds, env, cacheKey).catch(err => console.error(`Background refresh failed for ${cacheKey}:`, err.message));
     return cached;
   }
   console.log(`Cache miss for ${cacheKey}`);
@@ -366,7 +360,7 @@ export default {
           { status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
         );
       }
-      // Add authentication check here in production (e.g., API key)
+      // TODO: Add authentication (e.g., API key) in production
       const result = await clearCache(env, cacheKey);
       console.log(`Request to ${path} processed in ${Date.now() - startTime}ms`);
       return new Response(JSON.stringify(result), {
@@ -380,5 +374,29 @@ export default {
       status: 404,
       headers: { 'Content-Type': 'application/json', ...corsHeaders },
     });
+  },
+
+  async scheduled(event, env, ctx) {
+    console.log(`Scheduled trigger fired at ${new Date(event.scheduledTime).toISOString()}`);
+    const startTime = Date.now();
+    try {
+      // Refresh caches for all categories and sources
+      const categories = [...new Set(RSS_FEEDS.map(feed => feed.category))];
+      const categoryPromises = categories.map(category => {
+        const feeds = RSS_FEEDS.filter(f => f.category.toLowerCase() === category.toLowerCase());
+        const cacheKey = `news_${slugify(category.toLowerCase())}`;
+        return fetchFeedsAndCache(feeds, env, cacheKey);
+      });
+      const allFeedsPromise = fetchFeedsAndCache(RSS_FEEDS, env, 'news_all');
+      const sourcePromises = RSS_FEEDS.map(feed => {
+        const cacheKey = `source_${slugify(feed.name.toLowerCase())}`;
+        return fetchFeedsAndCache([feed], env, cacheKey);
+      });
+
+      await Promise.all([...categoryPromises, allFeedsPromise, ...sourcePromises]);
+      console.log(`Scheduled cache refresh completed in ${Date.now() - startTime}ms`);
+    } catch (error) {
+      console.error(`Scheduled cache refresh failed: ${error.message}`);
+    }
   },
 };
