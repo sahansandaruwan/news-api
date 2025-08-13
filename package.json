@@ -1,16 +1,19 @@
 {
-  "name": "news-api",
+  "name": "newsapis",
   "version": "1.0.0",
   "description": "News aggregator API with RSS feeds for Cloudflare Workers",
   "main": "index.js",
   "scripts": {
-    "deploy": "wrangler deploy",
-    "dev": "wrangler dev"
+    "deploy": "npx wrangler deploy",
+    "dev": "npx wrangler dev",
+    "audit": "npm audit",
+    "fix": "npm audit fix"
   },
   "dependencies": {
-    "rss-parser": "^3.12.0"
+    "rss-parser": "^3.13.0",
+    "sanitize-html": "^2.13.0"
   },
   "devDependencies": {
-    "wrangler": "^3.0.0"
+    "wrangler": "^4.29.1"
   }
 }
