@@ -1,7 +1,16 @@
 import Parser from 'rss-parser';
 import sanitizeHtml from 'sanitize-html';
 
-const parser = new Parser();
+const parser = new Parser({
+  customFields: {
+    item: [
+      ['media:content', 'mediaContent', {keepArray: true}],
+      ['media:thumbnail', 'mediaThumbnail', {keepArray: true}],
+      ['enclosure', 'enclosure', {keepArray: true}],
+      ['content:encoded', 'contentEncoded'],
+    ]
+  }
+});
 
 // Configuration constants
 const CONFIG = {
@@ -22,17 +31,17 @@ const slugify = str =>
 const stripHTML = html =>
   html ? sanitizeHtml(html, { allowedTags: [], allowedAttributes: {} }).trim() : '';
 
-async function fetchWithTimeout(url, ms = CONFIG.FETCH_TIMEOUT_MS, retries = 2) {
+async function fetchWithTimeout(url, ms = CONFIG.FETCH_TIMEOUT_MS, retries = 2, fetchOptions = {}) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), ms);
   try {
-    const response = await fetch(url, { signal: controller.signal, cf: { cacheTtl: CONFIG.CACHE_TTL_SECONDS } });
+    const response = await fetch(url, { ...fetchOptions, signal: controller.signal, cf: { cacheTtl: CONFIG.CACHE_TTL_SECONDS } });
     if (!response.ok) throw new Error(`HTTP error ${response.status}`);
     return response;
   } catch (error) {
     if (retries > 0 && error.name === 'AbortError') {
       console.warn(`Retrying fetch for ${url}, retries left: ${retries}`);
-      return fetchWithTimeout(url, ms, retries - 1);
+      return fetchWithTimeout(url, ms, retries - 1, fetchOptions);
     }
     throw error;
   } finally {
@@ -57,21 +66,83 @@ const RSS_FEEDS = [
   { name: 'This American Life', url: 'https://feeds.thisamericanlife.org/talpodcast', category: 'Podcasts', description: 'Storytelling and journalism with a wide range of topics and voices.' },
 ];
 
-// Parse and clean RSS feed
-async function parseRSSFeed(feed) {
+// Extract image from RSS item
+function extractImage(item, feedLink) {
+  let image = null;
+
+  // media:content with medium=image or type=image/*
+  if (item.mediaContent && item.mediaContent.length > 0) {
+    const imgMedia = item.mediaContent.find(m => 
+      m.$?.medium === 'image' || m.$?.type?.startsWith('image/')
+    );
+    if (imgMedia) image = imgMedia.$?.url;
+  }
+
+  // media:thumbnail
+  if (!image && item.mediaThumbnail && item.mediaThumbnail.length > 0) {
+    const thumb = item.mediaThumbnail[0];
+    if (thumb && thumb.$?.url) image = thumb.$?.url;
+  }
+
+  // enclosure with type=image/*
+  if (!image && item.enclosure && item.enclosure.length > 0) {
+    const imgEnc = item.enclosure.find(e => e.$?.type?.startsWith('image/'));
+    if (imgEnc) image = imgEnc.$?.url;
+  }
+
+  // Fallback: parse <img> from content:encoded or description
+  if (!image) {
+    const html = item.contentEncoded || item.description || '';
+    const match = html.match(/<img[^>]*src\s*=\s*["']([^"']+)["']/i);
+    if (match) image = match[1];
+  }
+
+  // Resolve relative URLs
+  if (image && feedLink) {
+    try {
+      image = new URL(image, feedLink).href;
+    } catch (e) {
+      // If invalid, keep as is
+    }
+  }
+
+  return image;
+}
+
+// Parse and clean RSS feed with image extraction and optional verification
+async function parseRSSFeed(feed, verifyImages = false) {
   try {
     const response = await fetchWithTimeout(feed.url);
     const text = await response.text();
     const parsed = await parser.parseString(text);
+
+    let articles = parsed.items.slice(0, CONFIG.MAX_ARTICLES_PER_FEED).map(item => ({
+      title: item.title || 'No title',
+      link: item.link || '#',
+      description: stripHTML(item.description || item.contentSnippet || 'No description'),
+      pubDate: item.pubDate ? new Date(item.pubDate).toISOString() : null,
+      source: feed.name,
+      category: feed.category,
+      image: extractImage(item, parsed.link),
+    }));
+
+    // Optionally verify image URLs exist (HEAD request)
+    if (verifyImages) {
+      articles = await Promise.all(articles.map(async (article) => {
+        if (article.image) {
+          try {
+            const headRes = await fetchWithTimeout(article.image, CONFIG.FETCH_TIMEOUT_MS, 1, { method: 'HEAD' });
+            if (!headRes.ok) article.image = null;
+          } catch {
+            article.image = null;
+          }
+        }
+        return article;
+      }));
+    }
+
     return {
-      articles: parsed.items.slice(0, CONFIG.MAX_ARTICLES_PER_FEED).map(item => ({
-        title: item.title || 'No title',
-        link: item.link || '#',
-        description: stripHTML(item.description || item.contentSnippet || 'No description'),
-        pubDate: item.pubDate ? new Date(item.pubDate).toISOString() : null,
-        source: feed.name,
-        category: feed.category,
-      })),
+      articles,
       metadata: {
         title: parsed.title || feed.name,
         description: feed.description,
@@ -144,6 +215,12 @@ function applyDateFilter(articles, startDate, endDate) {
   });
 }
 
+// Image filter
+function applyImageFilter(articles, withImage) {
+  if (!withImage) return articles;
+  return articles.filter(a => a.image !== null);
+}
+
 // Deduplicate articles
 function deduplicateArticles(articles) {
   const seen = new Set();
@@ -176,9 +253,9 @@ function paginate(articles, limit, page) {
 }
 
 // Fetch and cache feeds
-async function fetchFeedsAndCache(feeds, env, cacheKey) {
+async function fetchFeedsAndCache(feeds, env, cacheKey, verifyImages = false) {
   const startTime = Date.now();
-  const results = await Promise.allSettled(feeds.map(feed => parseRSSFeed(feed)));
+  const results = await Promise.allSettled(feeds.map(feed => parseRSSFeed(feed, verifyImages)));
   const articles = results
     .filter(result => result.status === 'fulfilled')
     .flatMap(result => result.value.articles);
@@ -198,15 +275,15 @@ async function fetchFeedsAndCache(feeds, env, cacheKey) {
 }
 
 // Serve cached articles and refresh in background
-async function fetchAndCacheFeeds(feeds, env, cacheKey) {
+async function fetchAndCacheFeeds(feeds, env, cacheKey, verifyImages = false) {
   const cached = await env.KV.get(`${CONFIG.CACHE_VERSION}_${cacheKey}`, { type: 'json' });
   if (cached) {
     console.log(`Cache hit for ${cacheKey}`);
-    fetchFeedsAndCache(feeds, env, cacheKey).catch(err => console.error(`Background refresh failed for ${cacheKey}:`, err.message));
+    fetchFeedsAndCache(feeds, env, cacheKey, verifyImages).catch(err => console.error(`Background refresh failed for ${cacheKey}:`, err.message));
     return cached;
   }
   console.log(`Cache miss for ${cacheKey}`);
-  return await fetchFeedsAndCache(feeds, env, cacheKey);
+  return await fetchFeedsAndCache(feeds, env, cacheKey, verifyImages);
 }
 
 // Clear cache endpoint
@@ -248,6 +325,8 @@ export default {
     const order = ['asc', 'desc'].includes(params.get('order')?.toLowerCase()) ? params.get('order').toLowerCase() : 'desc';
     const startDate = params.get('startDate') || null;
     const endDate = params.get('endDate') || null;
+    const withImage = params.get('with_image') === 'true';
+    const verifyImages = params.get('verify_images') === 'true';
 
     // Route: /api/news/:category?
     if (path.startsWith('/api/news')) {
@@ -266,9 +345,10 @@ export default {
         );
       }
 
-      const { articles, metadata } = await fetchAndCacheFeeds(feedsToFetch, env, cacheKey);
+      const { articles, metadata } = await fetchAndCacheFeeds(feedsToFetch, env, cacheKey, verifyImages);
       let filtered = applySearchFilter(articles, search);
       filtered = applyDateFilter(filtered, startDate, endDate);
+      filtered = applyImageFilter(filtered, withImage);
       filtered = applySorting(filtered, sort, order);
       const paginated = paginate(filtered, limit, page);
 
@@ -316,9 +396,10 @@ export default {
         );
       }
 
-      const { articles, metadata } = await fetchAndCacheFeeds([feed], env, cacheKey);
+      const { articles, metadata } = await fetchAndCacheFeeds([feed], env, cacheKey, verifyImages);
       let filtered = applySearchFilter(articles, search);
       filtered = applyDateFilter(filtered, startDate, endDate);
+      filtered = applyImageFilter(filtered, withImage);
       filtered = applySorting(filtered, sort, order);
       const paginated = paginate(filtered, limit, page);
 
