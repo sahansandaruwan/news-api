@@ -64,6 +64,7 @@ const RSS_FEEDS = [
   { name: 'Harvard Business Review', url: 'https://feeds.hbr.org/harvardbusiness', category: 'Business', description: 'Insights on strategy, innovation, and leadership for business professionals.' },
   { name: 'Entrepreneur', url: 'https://www.entrepreneur.com/latest.rss', category: 'Business', description: 'News, tips, and tools for entrepreneurs to build and grow businesses.' },
   { name: 'This American Life', url: 'https://feeds.thisamericanlife.org/talpodcast', category: 'Podcasts', description: 'Storytelling and journalism with a wide range of topics and voices.' },
+  { name: 'Science – Ars Technica', url: 'https://feeds.arstechnica.com/arstechnica/science', category: 'science', description: 'Serving the Technologist since 1998. News, reviews, and analysis.' },
 ];
 
 // Extract image from RSS item
